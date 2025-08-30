@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Installer/build files
+*.egg-info/
+pip-wheel-metadata/
+build/
+dist/
+
+# Distribution / packaging
+*.egg
+*.whl
+
+# Unit test / coverage
+htmlcov/
+.coverage
+.pytest_cache/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Flask instance folder (contains local DB / config)
+instance/
+
+# Uploaded user files (do not commit user uploads)
+app/static/uploads/
+
+# SQLite
+*.db
+*.sqlite3
+
+# Misc
+.env
+.cache/
+.mypy_cache/
