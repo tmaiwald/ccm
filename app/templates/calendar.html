@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h2 class="mb-0">Week {{ week }} — {{ days[0].date.strftime('%Y-%m-%d') }} to {{ days[-1].date.strftime('%Y-%m-%d') }}</h2>
+    <div>
+      <a class="btn btn-outline-secondary me-2" href="{{ url_for('main.calendar_view', year=prev_year, week=prev_week) }}">Prev week</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('main.calendar_view', year=next_year, week=next_week) }}">Next week</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-body">
+      <div class="calendar-grid row gx-2 gy-2">
+        {% for day in days %}
+          <div class="col-12 col-sm-6 col-md-4 col-lg-2">
+            <div class="card h-100 day-card">
+              <div class="card-header d-flex justify-content-between align-items-center">
+                <div class="fw-bold">{{ day.date.strftime('%a %d.%m') }}</div>
+                <div class="small text-muted">{{ day.date.strftime('%Y') }}</div>
+              </div>
+              <div class="card-body p-2">
+                {% for p in day.proposals %}
+                  <div class="proposal p-2 mb-2 border rounded">
+                    <div class="d-flex justify-content-between align-items-start">
+                      <div>
+                        <strong class="d-block">{{ p.recipe.title }}</strong>
+                        <small class="text-muted">by {{ p.proposer.username }} · {{ p.start_time.strftime('%H:%M') if p.start_time else '12:00' }}</small>
+                      </div>
+                      <div class="text-end">
+                        {% set ns = namespace(joined=False) %}
+                        {% for pa in p.participants %}
+                          {% if current_user.is_authenticated and pa.user_id == current_user.id %}
+                            {% set ns.joined = true %}
+                          {% endif %}
+                        {% endfor %}
+
+                        {% if current_user.is_authenticated %}
+                          <div class="d-flex flex-column gap-1">
+                            {% if ns.joined %}
+                              <form method="post" action="{{ url_for('main.unjoin_proposal', proposal_id=p.id) }}">
+                                <button class="btn btn-sm btn-outline-danger">Leave</button>
+                              </form>
+                            {% else %}
+                              <form method="post" action="{{ url_for('main.join_proposal', proposal_id=p.id) }}">
+                                <button class="btn btn-sm btn-primary">Join</button>
+                              </form>
+                            {% endif %}
+                            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.proposal_discuss', proposal_id=p.id) }}">Discuss</a>
+                          </div>
+                        {% endif %}
+                      </div>
+                    </div>
+                    <div class="small mt-1">Joined: {{ p.participants|length }}</div>
+                  </div>
+                {% endfor %}
+
+                {% if current_user.is_authenticated %}
+                  <div class="mb-2 d-flex justify-content-end">
+                    <button class="btn btn-sm btn-outline-primary rounded-circle d-inline-flex align-items-center justify-content-center" style="width:36px;height:36px;padding:0;" onclick="openProposeModal('{{ day.date.isoformat() }}')" title="Propose meal" aria-label="Propose meal">+</button>
+                  </div>
+                {% endif %}
+
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal for selecting recipe -->
+  <div class="modal fade" id="proposeModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <form method="post" action="{{ url_for('main.propose_recipe_form') }}">
+          <div class="modal-header">
+            <h5 class="modal-title">Propose recipe for <span id="modalDate"></span></h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <input type="hidden" name="date" id="modalDateInput">
+            <div class="mb-3">
+              <label class="form-label">Choose recipe</label>
+              <select name="recipe_id" id="modalRecipeSelect" class="form-select" required>
+                <option value="">-- choose --</option>
+                {% for r in recipes %}
+                  <option value="{{ r.id }}">{{ r.title }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Start time</label>
+              <input type="time" name="start_time" id="modalStartTime" class="form-control" value="12:00">
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary">Propose</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script>
+  function openProposeModal(date){
+    document.getElementById('modalDate').innerText = date;
+    document.getElementById('modalDateInput').value = date;
+    var myModal = new bootstrap.Modal(document.getElementById('proposeModal'));
+    myModal.show();
+  }
+  </script>
+
+  <style>
+  .calendar-grid { display: flex; flex-wrap: wrap; }
+  .day-card { min-height: 160px; }
+  .proposal { background: #f8f9fa; }
+  </style>
+{% endblock %}

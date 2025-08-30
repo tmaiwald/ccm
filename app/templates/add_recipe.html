@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <h1 class="h3 mb-3">Add Recipe</h1>
+
+  <form method="post" enctype="multipart/form-data" class="needs-validation" novalidate>
+    <div class="mb-3">
+      <label for="title" class="form-label">Title</label>
+      <input id="title" name="title" class="form-control" required value="{{ recipe.title if recipe else '' }}">
+    </div>
+
+    <div class="mb-3">
+      <label for="ingredients" class="form-label">Ingredients (one per line)</label>
+      <textarea id="ingredients" name="ingredients" class="form-control" rows="4" required>{{ recipe.ingredients if recipe else '' }}</textarea>
+    </div>
+
+    <div class="mb-3">
+      <label for="instructions" class="form-label">Instructions</label>
+      <textarea id="instructions" name="instructions" class="form-control" rows="6" required>{{ recipe.instructions if recipe else '' }}</textarea>
+    </div>
+
+    <div class="row g-3 mb-3">
+      <div class="col-md-3">
+        <label class="form-label">Prep time (min)</label>
+        <input type="number" min="0" name="prep_time" class="form-control" value="{{ recipe.prep_time if recipe and recipe.prep_time else '' }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Active time (min)</label>
+        <input type="number" min="0" name="active_time" class="form-control" value="{{ recipe.active_time if recipe and recipe.active_time else '' }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Total time (min)</label>
+        <input type="number" min="0" name="total_time" class="form-control" value="{{ recipe.total_time if recipe and recipe.total_time else '' }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">Level</label>
+        <select name="level" class="form-select">
+          <option value="">-- choose --</option>
+          <option value="simple" {% if recipe and recipe.level=='simple' %}selected{% endif %}>Simple</option>
+          <option value="medium" {% if recipe and recipe.level=='medium' %}selected{% endif %}>Medium</option>
+          <option value="advanced" {% if recipe and recipe.level=='advanced' %}selected{% endif %}>Advanced</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Image (optional)</label>
+      {% if recipe and recipe.image %}
+        <div class="mb-2">
+          <img src="{{ url_for('static', filename='uploads/'~recipe.image) }}" style="max-width:180px;max-height:120px;object-fit:cover;border-radius:6px;" alt="current image">
+        </div>
+      {% endif %}
+      <input type="file" name="image" accept="image/*" class="form-control">
+    </div>
+
+    <button class="btn btn-success" type="submit">Save Recipe</button>
+    <a class="btn btn-secondary ms-2" href="{{ url_for('main.index') }}">Cancel</a>
+  </form>
+{% endblock %}

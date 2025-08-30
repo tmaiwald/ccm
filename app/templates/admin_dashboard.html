@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <h2>Admin dashboard</h2>
+
+  <h4>Create user</h4>
+  <form method="post" action="{{ url_for('main.admin_create_user') }}" class="row g-2 mb-4">
+    <div class="col-auto"><input name="username" class="form-control" placeholder="username" required></div>
+    <div class="col-auto"><input name="email" class="form-control" placeholder="email"></div>
+    <div class="col-auto"><input name="password" type="password" class="form-control" placeholder="password" required></div>
+    <div class="col-auto d-flex align-items-center"><label class="form-check-label me-2">Admin</label><input type="checkbox" name="is_admin"></div>
+    <div class="col-auto"><button class="btn btn-primary">Create</button></div>
+  </form>
+
+  <h4>Users</h4>
+  <table class="table">
+    <thead><tr><th>id</th><th>username</th><th>email</th><th>admin</th><th>actions</th></tr></thead>
+    <tbody>
+      {% for u in users %}
+        <tr>
+          <td>{{ u.id }}</td>
+          <td>{{ u.username }}</td>
+          <td>{{ u.email }}</td>
+          <td>{{ 'yes' if u.is_admin else 'no' }}</td>
+          <td>
+            <form method="post" action="{{ url_for('main.admin_toggle_admin', user_id=u.id) }}" style="display:inline">
+              <button class="btn btn-sm btn-outline-secondary">Toggle admin</button>
+            </form>
+            <form method="post" action="{{ url_for('main.admin_change_password', user_id=u.id) }}" style="display:inline" class="ms-2">
+              <input name="password" placeholder="new password" required>
+              <button class="btn btn-sm btn-outline-primary ms-1">Change</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endblock %}

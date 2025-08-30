@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <h2>Users</h2>
+  <p>Filter and browse all users.</p>
+
+  <div class="mb-3">
+    <input id="filterInput" class="form-control" placeholder="Filter by username..." oninput="filterUsers()">
+  </div>
+
+  <div id="usersList" class="row row-cols-1 row-cols-md-2 g-3">
+    {% for item in users %}
+      <div class="col user-item">
+        <div class="card p-2 d-flex align-items-center">
+          <div class="d-flex w-100 align-items-center">
+            {% if item.user.avatar %}
+              <img src="{{ url_for('static', filename='uploads/'~item.user.avatar) }}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;margin-right:12px;">
+            {% else %}
+              <img src="{{ url_for('static', filename='img/default-avatar.svg') }}" style="width:64px;height:64px;object-fit:cover;border-radius:8px;margin-right:12px;">
+            {% endif %}
+            <div>
+              <a href="{{ url_for('main.profile', user_id=item.user.id) }}"><strong>{{ item.user.username }}</strong></a>
+              <div class="small text-muted">Recipes: {{ item.recipes_count }} · Times cooked: {{ item.times_cooked }}</div>
+            </div>
+            {% if current_user.is_authenticated and current_user.is_admin %}
+              <div class="ms-auto">
+                <form method="post" action="{{ url_for('main.admin_delete_user', user_id=item.user.id) }}" style="display:inline">
+                  <button class="btn btn-sm btn-outline-danger">Delete</button>
+                </form>
+              </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <script>
+  function filterUsers(){
+    const q = document.getElementById('filterInput').value.toLowerCase();
+    document.querySelectorAll('.user-item').forEach(el=>{
+      const name = el.querySelector('strong').innerText.toLowerCase();
+      el.style.display = name.includes(q) ? '' : 'none';
+    });
+  }
+  </script>
+{% endblock %}
