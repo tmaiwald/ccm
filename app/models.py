@@ -86,4 +86,5 @@ class MailConfig(db.Model):
     username = db.Column(db.String(255), nullable=True)
     password = db.Column(db.String(255), nullable=True)
     from_address = db.Column(db.String(255), nullable=True)
+    site_host = db.Column(db.String(255), nullable=True)  # public host/URL for links (e.g. https://ccm-m.aiwald.de)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -91,7 +91,7 @@ def make_proposal_mail(proposal, action, actor, extra_text=None):
     - extra_text: optional additional paragraph to include in the body
 
     Subjects will use ' | ' separators and the short date format DD.MM.
-    The body includes a direct link to the proposal discussion on the assumed hostname https://ccm.xyz
+    The body includes a direct link to the proposal discussion on the assumed hostname https://ccm-m.aiwald.de
     """
     short_date = proposal.date.strftime('%d.%m')
     # subject includes actor/action compactly
@@ -102,7 +102,10 @@ def make_proposal_mail(proposal, action, actor, extra_text=None):
         discussion_path = url_for('main.proposal_discuss', proposal_id=proposal.id)
     except Exception:
         discussion_path = f"/proposal/{proposal.id}/discuss"
-    discussion_url = f"https://ccm.xyz{discussion_path}"
+    cfg = MailConfig.query.first()
+    host = cfg.site_host.strip() if cfg and cfg.site_host else 'https://ccm-m.aiwald.de'
+    # ensure no duplicate slashes
+    discussion_url = f"{host.rstrip('/')}" + discussion_path
 
     body_lines = [f"Hello,", "", f"{actor} {action} for the meal \"{proposal.recipe.title}\" on {short_date}."]
     if extra_text:
@@ -515,6 +518,7 @@ def admin_mail_config():
         username = request.form.get('username')
         password = request.form.get('password')
         from_address = request.form.get('from_address')
+        site_host = request.form.get('site_host')
         if not cfg:
             cfg = MailConfig()
             db.session.add(cfg)
@@ -524,6 +528,7 @@ def admin_mail_config():
         cfg.username = username
         cfg.password = password
         cfg.from_address = from_address
+        cfg.site_host = site_host
         db.session.commit()
         flash('Mail configuration saved', 'success')
         return redirect(url_for('main.admin_mail_config'))
