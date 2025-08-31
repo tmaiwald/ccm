@@ -11,6 +11,7 @@
     <div class="col-3"><input name="username" value="{{ cfg.username if cfg else '' }}" class="form-control" placeholder="username"></div>
     <div class="col-3"><input name="password" value="" class="form-control" placeholder="password (leave blank to keep)"></div>
     <div class="col-2"><input name="from_address" value="{{ cfg.from_address if cfg else '' }}" class="form-control" placeholder="from address"></div>
+    <div class="col-4"><input name="site_host" value="{{ cfg.site_host if cfg else 'https://ccm-m.aiwald.de' }}" class="form-control" placeholder="https://your-site.example.com"></div>
     <div class="col-12 mt-2"><button class="btn btn-primary">Save mail settings</button></div>
   </form>
 
@@ -23,6 +24,7 @@
         <li>Use TLS: <strong>{{ 'yes' if cfg.use_tls else 'no' }}</strong></li>
         <li>Username: <strong>{{ cfg.username }}</strong></li>
         <li>From address: <strong>{{ cfg.from_address }}</strong></li>
+        <li>Site host: <strong>{{ cfg.site_host }}</strong></li>
       </ul>
       <form method="post" action="{{ url_for('main.admin_send_test_mail') }}">
         <div class="row g-2 align-items-center">
