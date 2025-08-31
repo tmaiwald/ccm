@@ -15,6 +15,8 @@ class User(UserMixin, db.Model):
     proposals = db.relationship('Proposal', backref='proposer', lazy=True, foreign_keys='Proposal.proposer_id')
     # proposals where this user was assigned to do grocery shopping
     grocery_proposals = db.relationship('Proposal', lazy=True, foreign_keys='Proposal.grocery_user_id')
+    # proposals where this user was assigned to cook
+    cook_proposals = db.relationship('Proposal', lazy=True, foreign_keys='Proposal.cook_user_id')
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -46,10 +48,15 @@ class Proposal(db.Model):
     # optional start time for the lunch (stored as time)
     start_time = db.Column(db.Time, nullable=True)
     grocery_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    # new: cook user (who will prepare/cook the meal)
+    cook_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
 
     recipe = db.relationship('Recipe', backref=db.backref('proposals', lazy=True))
     participants = db.relationship('Participant', backref='proposal', cascade='all, delete-orphan', lazy=True)
-    grocery_user = db.relationship('User', foreign_keys=[grocery_user_id])
+    # these relationships overlap with User.grocery_proposals / User.cook_proposals
+    # add 'overlaps' to silence SQLAlchemy mapper warnings about multiple relationships
+    grocery_user = db.relationship('User', foreign_keys=[grocery_user_id], overlaps='grocery_proposals')
+    cook_user = db.relationship('User', foreign_keys=[cook_user_id], overlaps='cook_proposals')
 
 class Participant(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -66,5 +73,17 @@ class Message(db.Model):
     content = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    proposal = db.relationship('Proposal', backref=db.backref('messages', lazy=True))
+    # ensure messages are deleted when their proposal is deleted to avoid NOT NULL FK errors
+    proposal = db.relationship('Proposal', backref=db.backref('messages', lazy=True, cascade='all, delete-orphan'))
     user = db.relationship('User', backref=db.backref('messages', lazy=True))
+
+
+class MailConfig(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    smtp_server = db.Column(db.String(255), nullable=True)
+    smtp_port = db.Column(db.Integer, nullable=True)
+    use_tls = db.Column(db.Boolean, default=True)
+    username = db.Column(db.String(255), nullable=True)
+    password = db.Column(db.String(255), nullable=True)
+    from_address = db.Column(db.String(255), nullable=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

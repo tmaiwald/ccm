@@ -1,0 +1,9 @@
+This folder contains Alembic migration scripts. Use the following commands to create and apply migrations:
+
+1. Create migration scripts:
+   flask db init    # only once (already scaffolded)
+   flask db migrate -m "message"
+2. Apply migrations:
+   flask db upgrade
+
+Make sure Flask-Migrate is installed and your virtualenv is active. The project uses app factory `create_app()`.

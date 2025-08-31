@@ -1,20 +1,27 @@
 from flask import Flask
+import os
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager
+from flask_migrate import Migrate
 
 db = SQLAlchemy()
 login_manager = LoginManager()
 login_manager.login_view = 'auth.login'
+migrate = Migrate()
 
 
 def create_app():
     app = Flask(__name__, template_folder="templates", static_folder="static")
-    app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///ccm.db"
+    # ensure instance directory exists and use it for the sqlite DB
+    os.makedirs(app.instance_path, exist_ok=True)
+    db_path = os.path.join(app.instance_path, 'ccm.db')
+    app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_path}"
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["SECRET_KEY"] = "dev"
 
     db.init_app(app)
     login_manager.init_app(app)
+    migrate.init_app(app, db)
 
     # register blueprints after db init to avoid context issues
     from .routes import main

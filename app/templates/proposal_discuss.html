@@ -28,16 +28,40 @@
       </div>
     {% endif %}
 
+    {% if proposal.cook_user %}
+      <div class="alert alert-info">
+        <strong>{{ proposal.cook_user.username }}</strong> will cook the meal.
+      </div>
+    {% endif %}
+
     {% if current_user.is_authenticated %}
-      <form method="post" action="{{ url_for('main.claim_grocery', proposal_id=proposal.id) }}">
-        {% if proposal.grocery_user_id == current_user.id %}
-          <button class="btn btn-danger">I changed my mind (unclaim)</button>
-        {% elif not proposal.grocery_user %}
-          <button class="btn btn-success">I'll do the groceries</button>
-        {% else %}
-          <button class="btn btn-secondary" disabled>Someone else will do the groceries</button>
+      <div class="d-flex gap-2">
+        <form method="post" action="{{ url_for('main.claim_grocery', proposal_id=proposal.id) }}">
+          {% if proposal.grocery_user_id == current_user.id %}
+            <button class="btn btn-danger">I changed my mind (unclaim groceries)</button>
+          {% elif not proposal.grocery_user %}
+            <button class="btn btn-success">I'll do the groceries</button>
+          {% else %}
+            <button class="btn btn-secondary" disabled>Someone else will do the groceries</button>
+          {% endif %}
+        </form>
+
+        <form method="post" action="{{ url_for('main.claim_cook', proposal_id=proposal.id) }}">
+          {% if proposal.cook_user_id == current_user.id %}
+            <button class="btn btn-danger">I changed my mind (unclaim cooking)</button>
+          {% elif not proposal.cook_user %}
+            <button class="btn btn-success">I care for cooking!</button>
+          {% else %}
+            <button class="btn btn-secondary" disabled>Someone else will cook</button>
+          {% endif %}
+        </form>
+
+        {% if proposal.proposer_id == current_user.id or current_user.is_admin %}
+          <form method="post" action="{{ url_for('main.delete_proposal', proposal_id=proposal.id) }}">
+            <button class="btn btn-outline-danger">Delete proposal</button>
+          </form>
         {% endif %}
-      </form>
+      </div>
     {% endif %}
   </div>
 
@@ -60,7 +84,7 @@
     </div>
   </div>
 
-  <h2>Discussion for: {{ proposal.recipe.title }} on {{ proposal.date.strftime('%Y-%m-%d') }}</h2>
+  <p class="text-muted small mb-3">Here you can exchange details and coordinate for "{{ proposal.recipe.title }}" on {{ proposal.date.strftime('%Y-%m-%d') }}.</p>
 
   <div class="mb-3">
     {% for m in messages %}

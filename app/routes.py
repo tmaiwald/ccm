@@ -1,12 +1,15 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g
 from . import db
-from .models import Recipe, Proposal, Participant, User, Message
+from .models import Recipe, Proposal, Participant, User, Message, MailConfig
 from flask_login import current_user, login_required
 from datetime import date, timedelta, time
 from calendar import monthrange
 import os
 from werkzeug.utils import secure_filename
 from functools import wraps
+import smtplib
+from email.message import EmailMessage
+from sqlalchemy import or_
 
 main = Blueprint("main", __name__)
 
@@ -26,6 +29,87 @@ def admin_required(f):
             return redirect(url_for('main.index'))
         return f(*args, **kwargs)
     return wrapper
+
+
+@main.before_app_request
+def load_mail_config():
+    # make mail config available in templates via g.mail_ok
+    g.mail_ok = False
+    cfg = MailConfig.query.first()
+    if cfg and cfg.smtp_server and cfg.username and cfg.password and cfg.from_address:
+        g.mail_ok = True
+
+
+def send_mail(subject, body, recipients):
+    # send mail using MailConfig if configured, otherwise return False
+    cfg = MailConfig.query.first()
+    if not cfg or not cfg.smtp_server or not cfg.username or not cfg.password or not cfg.from_address:
+        return False
+    try:
+        msg = EmailMessage()
+        msg['Subject'] = subject
+        msg['From'] = cfg.from_address
+        msg['To'] = ', '.join(recipients)
+        msg.set_content(body)
+        if cfg.use_tls:
+            s = smtplib.SMTP(cfg.smtp_server, cfg.smtp_port, timeout=10)
+            s.starttls()
+        else:
+            s = smtplib.SMTP(cfg.smtp_server, cfg.smtp_port, timeout=10)
+        s.login(cfg.username , cfg.password)
+        s.send_message(msg)
+        s.quit()
+        return True
+    except Exception as e:
+        # Log exception
+        current_app.logger.exception('Mail send failed: %s', e)
+        # Print full mail settings (including password) to console for debugging as requested
+        try:
+            info = (
+                f"Mail settings:\n"
+                f"  server: {cfg.smtp_server}\n"
+                f"  port: {cfg.smtp_port}\n"
+                f"  use_tls: {cfg.use_tls}\n"
+                f"  username: {cfg.username}\n"
+                f"  password: {cfg.password}\n"
+                f"  from_address: {cfg.from_address}\n"
+            )
+            # both logger and plain print so it appears on console
+            current_app.logger.error(info)
+            print(info)
+        except Exception:
+            # ignore logging errors
+            pass
+        return False
+
+
+# helper to create nicer subjects and bodies for proposal-related mails
+def make_proposal_mail(proposal, action, actor, extra_text=None):
+    """Return (subject, body).
+    - action: a short verb like 'joined', 'left', 'claimed grocery duty', 'removed the proposal', 'left a message'
+    - actor: username or description of who performed the action
+    - extra_text: optional additional paragraph to include in the body
+
+    Subjects will use ' | ' separators and the short date format DD.MM.
+    The body includes a direct link to the proposal discussion on the assumed hostname https://ccm.xyz
+    """
+    short_date = proposal.date.strftime('%d.%m')
+    # subject includes actor/action compactly
+    subject = f"CCM: {proposal.recipe.title} | {short_date} | {actor} {action}"
+
+    # build a link to the discussion page on the assumed host
+    try:
+        discussion_path = url_for('main.proposal_discuss', proposal_id=proposal.id)
+    except Exception:
+        discussion_path = f"/proposal/{proposal.id}/discuss"
+    discussion_url = f"https://ccm.xyz{discussion_path}"
+
+    body_lines = [f"Hello,", "", f"{actor} {action} for the meal \"{proposal.recipe.title}\" on {short_date}."]
+    if extra_text:
+        body_lines.extend(["", extra_text])
+    body_lines.extend(["", f"View the discussion and details here: {discussion_url}", "", "Best regards,", "Cleverly Connected Meals (CCM)"])
+    body = "\n".join(body_lines)
+    return subject, body
 
 
 @main.route("/")
@@ -102,7 +186,8 @@ def calendar_view():
         year, week = today.isocalendar()[0], today.isocalendar()[1]
         start = date.fromisocalendar(year, week, 1)
 
-    days_list = [start + timedelta(days=i) for i in range(7)]
+    # show only Monday..Friday
+    days_list = [start + timedelta(days=i) for i in range(5)]
     days = []
     for d in days_list:
         proposals = Proposal.query.filter_by(date=d).all()
@@ -116,10 +201,20 @@ def calendar_view():
 
     recipes = Recipe.query.order_by(Recipe.created_at.desc()).all()
 
+    # compute all commitments for the current user (not limited to the week)
+    commitments = []
+    if current_user.is_authenticated:
+        commitments = Proposal.query.outerjoin(Participant).filter(
+            or_(Participant.user_id == current_user.id,
+                Proposal.cook_user_id == current_user.id,
+                Proposal.grocery_user_id == current_user.id)
+        ).distinct().order_by(Proposal.date.asc(), Proposal.start_time.asc()).all()
+
     return render_template('calendar.html', days=days, recipes=recipes,
                            week=week, year=year,
                            prev_year=prev_year, prev_week=prev_week,
-                           next_year=next_year, next_week=next_week)
+                           next_year=next_year, next_week=next_week,
+                           today=today, commitments=commitments)
 
 
 @main.route('/recipes')
@@ -181,7 +276,14 @@ def join_proposal(proposal_id):
         db.session.add(part)
         db.session.commit()
         flash('Joined', 'success')
-    return redirect(url_for('main.calendar_view'))
+        # notify other participants
+        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id]
+        if recipients:
+            subj, body = make_proposal_mail(p, 'joined the meal', current_user.username)
+            send_mail(subj, body, recipients)
+    # return to the week containing the proposal so the user stays on the same week
+    py, pw, _ = p.date.isocalendar()
+    return redirect(url_for('main.calendar_view', year=py, week=pw))
 
 
 @main.route('/proposal/unjoin/<int:proposal_id>', methods=['POST'])
@@ -190,10 +292,16 @@ def unjoin_proposal(proposal_id):
     p = Proposal.query.get_or_404(proposal_id)
     part = Participant.query.filter_by(proposal_id=p.id, user_id=current_user.id).first()
     if part:
+        # prepare recipients before removal
+        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id]
         db.session.delete(part)
         db.session.commit()
         flash('Left', 'success')
-    return redirect(url_for('main.calendar_view'))
+        if recipients:
+            subj, body = make_proposal_mail(p, 'left the meal', current_user.username)
+            send_mail(subj, body, recipients)
+    py, pw, _ = p.date.isocalendar()
+    return redirect(url_for('main.calendar_view', year=py, week=pw))
 
 
 @main.route('/profile/<int:user_id>')
@@ -299,14 +407,21 @@ def propose_recipe_js():
 @login_required
 def delete_proposal(proposal_id):
     p = Proposal.query.get_or_404(proposal_id)
-    # only proposer may delete
-    if p.proposer_id != current_user.id:
+    # allow proposer or admin to delete
+    if p.proposer_id != current_user.id and not getattr(current_user, 'is_admin', False):
         flash('Not allowed', 'warning')
         return redirect(url_for('main.calendar_view'))
+    # prepare info before deletion
+    title = p.recipe.title
+    pdate = p.date
+    recipients = [pa.user.email for pa in p.participants if pa.user.email]
     db.session.delete(p)
     db.session.commit()
     flash('Proposal removed', 'success')
-    return redirect(url_for('main.calendar_view', year=p.date.year, month=p.date.month))
+    if recipients:
+        subj, body = make_proposal_mail(p, 'removed the proposal', current_user.username, extra_text=f'The proposal was removed by {current_user.username}.')
+        send_mail(subj, body, recipients)
+    return redirect(url_for('main.calendar_view', year=pdate.year, month=pdate.month))
 
 
 @main.route('/proposal/<int:proposal_id>/claim_grocery', methods=['POST'])
@@ -322,10 +437,48 @@ def claim_grocery(proposal_id):
         p.grocery_user_id = None
         db.session.commit()
         flash('You unclaimed grocery duty', 'success')
+        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id]
+        if recipients:
+            subj, body = make_proposal_mail(p, 'unclaimed grocery duty', current_user.username)
+            send_mail(subj, body, recipients)
     else:
         p.grocery_user_id = current_user.id
         db.session.commit()
         flash('You will do the groceries', 'success')
+        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id]
+        if recipients:
+            subj, body = make_proposal_mail(p, 'claimed grocery duty', current_user.username)
+            send_mail(subj, body, recipients)
+    return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+
+
+@main.route('/proposal/<int:proposal_id>/claim_cook', methods=['POST'])
+@login_required
+def claim_cook(proposal_id):
+    p = Proposal.query.get_or_404(proposal_id)
+    # if already claimed by someone else, prevent
+    if p.cook_user_id and p.cook_user_id != current_user.id:
+        flash('Already claimed by someone else', 'warning')
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+    # toggle: if current user already claimed, unclaim
+    if p.cook_user_id == current_user.id:
+        p.cook_user_id = None
+        db.session.commit()
+        flash('You unclaimed cooking duty', 'success')
+        # notify participants
+        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id]
+        if recipients:
+            subj, body = make_proposal_mail(p, 'unclaimed cooking duty', current_user.username)
+            send_mail(subj, body, recipients)
+    else:
+        p.cook_user_id = current_user.id
+        db.session.commit()
+        flash('You will cook the meal', 'success')
+        # notify participants
+        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id]
+        if recipients:
+            subj, body = make_proposal_mail(p, 'claimed cooking duty', current_user.username)
+            send_mail(subj, body, recipients)
     return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
 
 
@@ -339,16 +492,42 @@ def proposal_discuss(proposal_id):
             m = Message(proposal_id=p.id, user_id=current_user.id, content=content)
             db.session.add(m)
             db.session.commit()
+            # notify participants (exclude the sender)
+            recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id]
+            if recipients:
+                subj, body = make_proposal_mail(p, 'left a message', current_user.username, extra_text=f'"{content}"')
+                send_mail(subj, body, recipients)
             return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
     messages = Message.query.filter_by(proposal_id=p.id).order_by(Message.created_at.asc()).all()
     return render_template('proposal_discuss.html', proposal=p, messages=messages)
 
 
-@main.route('/recipe/<int:recipe_id>')
+# Admin mail config endpoints
+@main.route('/admin/mail', methods=['GET', 'POST'])
 @login_required
-def recipe_detail(recipe_id):
-    r = Recipe.query.get_or_404(recipe_id)
-    return render_template('recipe_detail.html', recipe=r)
+@admin_required
+def admin_mail_config():
+    cfg = MailConfig.query.first()
+    if request.method == 'POST':
+        smtp_server = request.form.get('smtp_server')
+        smtp_port = int(request.form.get('smtp_port') or 0)
+        use_tls = bool(request.form.get('use_tls'))
+        username = request.form.get('username')
+        password = request.form.get('password')
+        from_address = request.form.get('from_address')
+        if not cfg:
+            cfg = MailConfig()
+            db.session.add(cfg)
+        cfg.smtp_server = smtp_server
+        cfg.smtp_port = smtp_port
+        cfg.use_tls = use_tls
+        cfg.username = username
+        cfg.password = password
+        cfg.from_address = from_address
+        db.session.commit()
+        flash('Mail configuration saved', 'success')
+        return redirect(url_for('main.admin_mail_config'))
+    return render_template('admin_mail.html', cfg=cfg)
 
 
 @main.route('/admin')
@@ -356,7 +535,28 @@ def recipe_detail(recipe_id):
 @admin_required
 def admin_dashboard():
     users = User.query.order_by(User.username).all()
-    return render_template('admin_dashboard.html', users=users)
+    cfg = MailConfig.query.first()
+    return render_template('admin_dashboard.html', users=users, cfg=cfg)
+
+
+@main.route('/admin/send_test_mail', methods=['POST'])
+@login_required
+@admin_required
+def admin_send_test_mail():
+    cfg = MailConfig.query.first()
+    recipient = request.form.get('recipient') or current_user.email
+    if not recipient:
+        flash('No recipient specified and current admin has no email', 'warning')
+        return redirect(url_for('main.admin_dashboard'))
+    # basic test message
+    subject = 'CCM test mail'
+    body = f'This is a test mail from CCM sent by {current_user.username}.'
+    ok = send_mail(subject, body, [recipient])
+    if ok:
+        flash(f'Test mail sent to {recipient}', 'success')
+    else:
+        flash('Failed to send test mail — check mail settings and logs', 'danger')
+    return redirect(url_for('main.admin_dashboard'))
 
 
 @main.route('/admin/create_user', methods=['POST'])
@@ -526,6 +726,13 @@ def delete_recipe(recipe_id):
     db.session.commit()
     flash('Recipe deleted', 'success')
     return redirect(url_for('main.recipes_list'))
+
+
+@main.route('/recipe/<int:recipe_id>')
+@login_required
+def recipe_detail(recipe_id):
+    r = Recipe.query.get_or_404(recipe_id)
+    return render_template('recipe_detail.html', recipe=r)
 
 
 @main.route('/users')

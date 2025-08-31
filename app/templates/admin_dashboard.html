@@ -3,6 +3,36 @@
 {% block content %}
   <h2>Admin dashboard</h2>
 
+  <h4>Mail configuration</h4>
+  <form method="post" action="{{ url_for('main.admin_mail_config') }}" class="row g-2 mb-4">
+    <div class="col-3"><input name="smtp_server" value="{{ cfg.smtp_server if cfg else '' }}" class="form-control" placeholder="SMTP server"></div>
+    <div class="col-1"><input name="smtp_port" value="{{ cfg.smtp_port if cfg else 587 }}" class="form-control" placeholder="Port"></div>
+    <div class="col-1 d-flex align-items-center"><label class="form-check-label me-2">TLS</label><input type="checkbox" name="use_tls" {% if cfg and cfg.use_tls %}checked{% endif %}></div>
+    <div class="col-3"><input name="username" value="{{ cfg.username if cfg else '' }}" class="form-control" placeholder="username"></div>
+    <div class="col-3"><input name="password" value="" class="form-control" placeholder="password (leave blank to keep)"></div>
+    <div class="col-2"><input name="from_address" value="{{ cfg.from_address if cfg else '' }}" class="form-control" placeholder="from address"></div>
+    <div class="col-12 mt-2"><button class="btn btn-primary">Save mail settings</button></div>
+  </form>
+
+  {% if cfg %}
+    <div class="mb-3">
+      <h6>Current mail settings</h6>
+      <ul>
+        <li>SMTP server: <strong>{{ cfg.smtp_server }}</strong></li>
+        <li>Port: <strong>{{ cfg.smtp_port }}</strong></li>
+        <li>Use TLS: <strong>{{ 'yes' if cfg.use_tls else 'no' }}</strong></li>
+        <li>Username: <strong>{{ cfg.username }}</strong></li>
+        <li>From address: <strong>{{ cfg.from_address }}</strong></li>
+      </ul>
+      <form method="post" action="{{ url_for('main.admin_send_test_mail') }}">
+        <div class="row g-2 align-items-center">
+          <div class="col-auto"><input name="recipient" class="form-control" placeholder="recipient email (defaults to your admin email)"></div>
+          <div class="col-auto"><button class="btn btn-outline-primary">Send test mail</button></div>
+        </div>
+      </form>
+    </div>
+  {% endif %}
+
   <h4>Create user</h4>
   <form method="post" action="{{ url_for('main.admin_create_user') }}" class="row g-2 mb-4">
     <div class="col-auto"><input name="username" class="form-control" placeholder="username" required></div>

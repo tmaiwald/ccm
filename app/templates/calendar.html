@@ -1,11 +1,60 @@
 {% extends "base.html" %}
 
 {% block content %}
-  <div class="d-flex justify-content-between align-items-center mb-3">
-    <h2 class="mb-0">Week {{ week }} — {{ days[0].date.strftime('%Y-%m-%d') }} to {{ days[-1].date.strftime('%Y-%m-%d') }}</h2>
-    <div>
-      <a class="btn btn-outline-secondary me-2" href="{{ url_for('main.calendar_view', year=prev_year, week=prev_week) }}">Prev week</a>
-      <a class="btn btn-outline-secondary" href="{{ url_for('main.calendar_view', year=next_year, week=next_week) }}">Next week</a>
+
+  {# Commitments overview (global, shown above the week header) #}
+  {% if current_user.is_authenticated %}
+  <div class="mb-3">
+    <h5 class="mb-2">Your commitments</h5>
+    {% if commitments %}
+      <div class="d-flex flex-row gap-3 overflow-auto py-2" style="-webkit-overflow-scrolling:touch;">
+        {% for p in commitments %}
+          {% set is_cook = (p.cook_user_id == current_user.id) %}
+          {% set is_grocery = (p.grocery_user_id == current_user.id) %}
+          {% set is_joined = p.participants|selectattr('user_id','equalto', current_user.id)|list %}
+
+          <div class="card commit-card" style="min-width:220px;max-width:320px;">
+            <div class="card-header">
+              <div class="d-flex justify-content-between align-items-center">
+                <div class="fw-bold small">{{ p.date.strftime('%a %d.%m') }}</div>
+                <div class="small">{{ p.start_time.strftime('%H:%M') if p.start_time else '12:00' }}</div>
+              </div>
+            </div>
+            <div class="card-body p-2">
+              <h6 class="card-title mb-1"><a href="{{ url_for('main.proposal_discuss', proposal_id=p.id) }}">{{ p.recipe.title }}</a></h6>
+              <div class="small text-muted mb-2">by {{ p.proposer.username }}</div>
+              <div class="d-flex justify-content-between align-items-center">
+                <div class="small text-muted">Participants: {{ p.participants|length }}</div>
+                <div class="d-flex gap-1 align-items-center">
+                  {% if is_cook %}
+                    <span class="badge bg-success">You will cook</span>
+                  {% endif %}
+                  {% if is_grocery %}
+                    <span class="badge bg-info text-dark">You will do groceries</span>
+                  {% endif %}
+                  {% if (not is_cook and not is_grocery) and is_joined %}
+                    <span class="badge bg-secondary">You joined</span>
+                  {% endif %}
+                  {% if (not is_cook and not is_grocery and not is_joined) %}
+                    <span class="badge bg-light text-muted">No commitment</span>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="text-muted">You have no commitments.</div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="d-flex align-items-center mb-3 top-bar">
+    <h2 class="mb-0 me-3">Week {{ week }}</h2>
+    <div class="btn-group" role="group" aria-label="Week navigation">
+      <a class="btn btn-outline-secondary" href="{{ url_for('main.calendar_view', year=prev_year, week=prev_week) }}">Prev</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('main.calendar_view', year=next_year, week=next_week) }}">Next</a>
     </div>
   </div>
 
@@ -15,7 +64,7 @@
         {% for day in days %}
           <div class="col-12 col-sm-6 col-md-4 col-lg-2">
             <div class="card h-100 day-card">
-              <div class="card-header d-flex justify-content-between align-items-center">
+              <div class="card-header d-flex justify-content-between align-items-center {% if day.date == today %}bg-danger text-white{% endif %}">
                 <div class="fw-bold">{{ day.date.strftime('%a %d.%m') }}</div>
                 <div class="small text-muted">{{ day.date.strftime('%Y') }}</div>
               </div>
@@ -47,6 +96,11 @@
                               </form>
                             {% endif %}
                             <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.proposal_discuss', proposal_id=p.id) }}">Discuss</a>
+                            {% if p.proposer_id == current_user.id or current_user.is_admin %}
+                              <form method="post" action="{{ url_for('main.delete_proposal', proposal_id=p.id) }}">
+                                <button class="btn btn-sm btn-outline-danger">Delete</button>
+                              </form>
+                            {% endif %}
                           </div>
                         {% endif %}
                       </div>
@@ -116,5 +170,12 @@
   .calendar-grid { display: flex; flex-wrap: wrap; }
   .day-card { min-height: 160px; }
   .proposal { background: #f8f9fa; }
+  /* Commitment card tweaks: neutral header, consistent heights */
+  .commit-card { display:flex; flex-direction:column; min-height:140px; }
+  .commit-card .card-body { flex:1; }
+  .commit-card .card-header { background: transparent; border-bottom:1px solid #e9ecef; }
+  .commit-card .card-title a { text-decoration:none; color:inherit; }
+  /* subtle material-like shadow below the top bar */
+  .top-bar { background: #fff; padding: 0.45rem; border-radius: 0.25rem; box-shadow: 0 2px 6px rgba(0,0,0,0.12); }
   </style>
 {% endblock %}

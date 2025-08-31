@@ -9,6 +9,13 @@
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+      /* subtle material-like shadow under the main navbar */
+      .navbar {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        z-index: 1030;
+      }
+    </style>
   </head>
   <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
@@ -68,6 +75,10 @@
     </nav>
 
     <div class="container my-4">
+      {% if not g.get('mail_ok', False) and current_user.is_authenticated and current_user.is_admin %}
+        <div class="alert alert-danger">Mail service not set up correctly</div>
+      {% endif %}
+
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
           {% for category, message in messages %}
