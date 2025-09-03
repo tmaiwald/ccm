@@ -284,7 +284,10 @@ def join_proposal(proposal_id):
         if recipients:
             subj, body = make_proposal_mail(p, 'joined the meal', current_user.username)
             send_mail(subj, body, recipients)
-    # return to the week containing the proposal so the user stays on the same week
+    # decide where to redirect based on optional 'next' parameter
+    next_param = (request.form.get('next') or request.args.get('next') or '').lower()
+    if next_param == 'discuss':
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
     py, pw, _ = p.date.isocalendar()
     return redirect(url_for('main.calendar_view', year=py, week=pw))
 
@@ -303,6 +306,10 @@ def unjoin_proposal(proposal_id):
         if recipients:
             subj, body = make_proposal_mail(p, 'left the meal', current_user.username)
             send_mail(subj, body, recipients)
+    # redirect to either the discussion page or the calendar week depending on 'next'
+    next_param = (request.form.get('next') or request.args.get('next') or '').lower()
+    if next_param == 'discuss':
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
     py, pw, _ = p.date.isocalendar()
     return redirect(url_for('main.calendar_view', year=py, week=pw))
 
@@ -502,7 +509,9 @@ def proposal_discuss(proposal_id):
                 send_mail(subj, body, recipients)
             return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
     messages = Message.query.filter_by(proposal_id=p.id).order_by(Message.created_at.asc()).all()
-    return render_template('proposal_discuss.html', proposal=p, messages=messages)
+    # pass explicit boolean whether current user has joined the proposal
+    joined = any(part.user_id == current_user.id for part in p.participants) if current_user.is_authenticated else False
+    return render_template('proposal_discuss.html', proposal=p, messages=messages, joined=joined)
 
 
 # Admin mail config endpoints
@@ -752,3 +761,31 @@ def users_overview():
         times_cooked = sum(r.times_cooked for r in recs)
         data.append({'user': u, 'recipes_count': recipes_count, 'times_cooked': times_cooked})
     return render_template('users_overview.html', users=data)
+
+
+@main.route('/proposal/<int:proposal_id>/change_start_time', methods=['POST'])
+@login_required
+def change_start_time(proposal_id):
+    p = Proposal.query.get_or_404(proposal_id)
+    # only proposer or admin may change start time
+    if p.proposer_id != current_user.id and not getattr(current_user, 'is_admin', False):
+        flash('Not allowed', 'warning')
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+    start_time_str = request.form.get('start_time')
+    st = None
+    if start_time_str:
+        try:
+            hh, mm = start_time_str.split(':')
+            st = time(int(hh), int(mm))
+        except Exception:
+            st = None
+    p.start_time = st
+    db.session.commit()
+    flash('Start time updated', 'success')
+    # notify other participants (exclude actor)
+    recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id]
+    if recipients:
+        extra = f'New start time: {p.start_time.strftime("%H:%M") if p.start_time else "12:00"}'
+        subj, body = make_proposal_mail(p, 'changed the start time', current_user.username, extra_text=extra)
+        send_mail(subj, body, recipients)
+    return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))

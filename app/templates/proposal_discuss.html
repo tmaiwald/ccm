@@ -9,13 +9,45 @@
         <img src="{{ url_for('static', filename='img/default-avatar.svg') }}" style="width:96px;height:96px;object-fit:cover;margin-right:12px;">
       {% endif %}
       <div>
-        <h5 class="mb-1"><a href="{{ url_for('main.recipe_detail', recipe_id=proposal.recipe.id) }}">{{ proposal.recipe.title }}</a></h5>
+        {# determine if current user is a participant (used in several places) #}
+        {% if current_user.is_authenticated %}
+          {% set joined = proposal.participants|selectattr('user_id','equalto', current_user.id)|list %}
+        {% else %}
+          {% set joined = [] %}
+        {% endif %}
+
+        <div class="d-flex align-items-center gap-2">
+          <h5 class="mb-0"><a href="{{ url_for('main.recipe_detail', recipe_id=proposal.recipe.id) }}">{{ proposal.recipe.title }}</a></h5>
+          {% if current_user.is_authenticated %}
+            <form method="post" action="{% if joined %}{{ url_for('main.unjoin_proposal', proposal_id=proposal.id) }}{% else %}{{ url_for('main.join_proposal', proposal_id=proposal.id) }}{% endif %}" class="ms-2">
+              <input type="hidden" name="next" value="discuss">
+              {% if joined %}
+                <button class="btn btn-sm btn-outline-danger">Leave</button>
+              {% else %}
+                <button class="btn btn-sm btn-primary">Join this meal !</button>
+              {% endif %}
+            </form>
+          {% endif %}
+        </div>
         <div class="small text-muted">By {{ proposal.proposer.username }} · {{ proposal.date.strftime('%Y-%m-%d') }}</div>
         <p class="mt-2 small">{{ proposal.recipe.ingredients|truncate(120) }}</p>
       </div>
-      <div class="ms-auto text-end">
-        <div class="badge bg-primary p-2" style="font-size:0.95rem;">
-          Starts: {{ proposal.start_time.strftime('%H:%M') if proposal.start_time else '12:00' }}
+      <div class="ms-auto text-end d-flex flex-column align-items-end">
+        <div class="d-flex align-items-center gap-2">
+          <div class="badge bg-primary p-2" style="font-size:0.95rem;">
+            Starts: {{ proposal.start_time.strftime('%H:%M') if proposal.start_time else '12:00' }}
+          </div>
+          {% if current_user.is_authenticated and (proposal.proposer_id == current_user.id or current_user.is_admin) %}
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="toggleTimeEdit" title="Change start time"><i class="material-icons" style="font-size:16px;vertical-align:middle;">settings</i></button>
+          {% endif %}
+        </div>
+
+        <div id="timeEditForm" class="mt-2" style="display:none;">
+          <form method="post" action="{{ url_for('main.change_start_time', proposal_id=proposal.id) }}" class="d-flex justify-content-end align-items-center">
+            <input type="time" name="start_time" value="{{ proposal.start_time.strftime('%H:%M') if proposal.start_time else '12:00' }}" class="form-control form-control-sm" style="width:110px;">
+            <button class="btn btn-sm btn-outline-primary ms-2">Update</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary ms-2" id="cancelTimeEdit">Cancel</button>
+          </form>
         </div>
       </div>
     </div>
@@ -35,33 +67,36 @@
     {% endif %}
 
     {% if current_user.is_authenticated %}
-      <div class="d-flex gap-2">
-        <form method="post" action="{{ url_for('main.claim_grocery', proposal_id=proposal.id) }}">
-          {% if proposal.grocery_user_id == current_user.id %}
-            <button class="btn btn-danger">I changed my mind (unclaim groceries)</button>
-          {% elif not proposal.grocery_user %}
-            <button class="btn btn-success">I'll do the groceries</button>
-          {% else %}
-            <button class="btn btn-secondary" disabled>Someone else will do the groceries</button>
-          {% endif %}
-        </form>
-
-        <form method="post" action="{{ url_for('main.claim_cook', proposal_id=proposal.id) }}">
-          {% if proposal.cook_user_id == current_user.id %}
-            <button class="btn btn-danger">I changed my mind (unclaim cooking)</button>
-          {% elif not proposal.cook_user %}
-            <button class="btn btn-success">I care for cooking!</button>
-          {% else %}
-            <button class="btn btn-secondary" disabled>Someone else will cook</button>
-          {% endif %}
-        </form>
-
-        {% if proposal.proposer_id == current_user.id or current_user.is_admin %}
-          <form method="post" action="{{ url_for('main.delete_proposal', proposal_id=proposal.id) }}">
-            <button class="btn btn-outline-danger">Delete proposal</button>
+      {# show claim buttons only for participants or proposer/admin #}
+      {% if joined or (proposal.proposer_id == current_user.id or current_user.is_admin) %}
+        <div class="d-flex gap-2">
+          <form method="post" action="{{ url_for('main.claim_grocery', proposal_id=proposal.id) }}">
+            {% if proposal.grocery_user_id == current_user.id %}
+              <button class="btn btn-danger">I changed my mind (unclaim groceries)</button>
+            {% elif not proposal.grocery_user %}
+              <button class="btn btn-success">I'll do the groceries</button>
+            {% else %}
+              <button class="btn btn-secondary" disabled>Someone else will do the groceries</button>
+            {% endif %}
           </form>
-        {% endif %}
-      </div>
+
+          <form method="post" action="{{ url_for('main.claim_cook', proposal_id=proposal.id) }}">
+            {% if proposal.cook_user_id == current_user.id %}
+              <button class="btn btn-danger">I changed my mind (unclaim cooking)</button>
+            {% elif not proposal.cook_user %}
+              <button class="btn btn-success">I care for cooking!</button>
+            {% else %}
+              <button class="btn btn-secondary" disabled>Someone else will cook</button>
+            {% endif %}
+          </form>
+
+          {% if proposal.proposer_id == current_user.id or current_user.is_admin %}
+            <form method="post" action="{{ url_for('main.delete_proposal', proposal_id=proposal.id) }}">
+              <button class="btn btn-outline-danger">Delete proposal</button>
+            </form>
+          {% endif %}
+        </div>
+      {% endif %}
     {% endif %}
   </div>
 
@@ -86,28 +121,37 @@
 
   <p class="text-muted small mb-3">Here you can exchange details and coordinate for "{{ proposal.recipe.title }}" on {{ proposal.date.strftime('%Y-%m-%d') }}.</p>
 
+  <h6>Messages</h6>
   <div class="mb-3">
     {% for m in messages %}
-      <div class="border rounded p-2 mb-2 d-flex">
-        <div class="me-3">
-          {% if m.user.avatar %}
-            <img src="{{ url_for('static', filename='uploads/'~m.user.avatar) }}" style="width:48px;height:48px;object-fit:cover;border-radius:6px;">
-          {% else %}
-            <img src="{{ url_for('static', filename='img/default-avatar.svg') }}" style="width:48px;height:48px;object-fit:cover;border-radius:6px;">
-          {% endif %}
-        </div>
-        <div class="flex-grow-1">
-          <div class="small text-muted">{{ m.user.username }} - {{ m.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
-          <div>{{ m.content }}</div>
-        </div>
+      <div class="border rounded p-2 mb-2">
+        <div class="small text-muted">{{ m.user.username }} · {{ m.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+        <div>{{ m.content }}</div>
       </div>
     {% endfor %}
-   </div>
+  </div>
 
-  <form method="post">
-    <div class="mb-3">
-      <textarea name="content" class="form-control" rows="4" required></textarea>
-    </div>
-    <button class="btn btn-primary">Post</button>
-  </form>
+  {# show posting form only to participants or proposer/admin #}
+  {% if joined or (current_user.is_authenticated and (proposal.proposer_id == current_user.id or current_user.is_admin)) %}
+    <form method="post">
+      <div class="mb-3">
+        <textarea name="content" class="form-control" rows="4" required></textarea>
+      </div>
+      <button class="btn btn-primary">Post</button>
+    </form>
+  {% endif %}
+
+  <script>
+  document.addEventListener('DOMContentLoaded', function(){
+    var btn = document.getElementById('toggleTimeEdit');
+    var form = document.getElementById('timeEditForm');
+    var cancel = document.getElementById('cancelTimeEdit');
+    if(btn){
+      btn.addEventListener('click', function(){ form.style.display = (form.style.display==='none') ? 'block' : 'none'; });
+    }
+    if(cancel){
+      cancel.addEventListener('click', function(){ form.style.display='none'; });
+    }
+  });
+  </script>
 {% endblock %}
