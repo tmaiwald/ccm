@@ -1,5 +1,3 @@
-.. readme..
-
 # Cleverly Connected Meals (CCM)
 
 Cleverly Connected Meals is a small Flask application to help teams organize shared lunches. Users can add recipes, propose meals for specific dates, join discussions, claim grocery or cooking duties and receive email notifications when things change.
