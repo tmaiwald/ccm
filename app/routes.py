@@ -575,6 +575,31 @@ def admin_send_test_mail():
     return redirect(url_for('main.admin_dashboard'))
 
 
+@main.route('/admin/broadcast', methods=['POST'])
+@login_required
+@admin_required
+def admin_broadcast():
+    """Send a broadcast email (subject + message) to all users with an email address."""
+    subject = (request.form.get('subject') or '').strip()
+    message = (request.form.get('message') or '').strip()
+    if not subject or not message:
+        flash('Subject and message are required for broadcast', 'warning')
+        return redirect(url_for('main.admin_dashboard'))
+
+    # collect recipient emails
+    recipients = [u.email for u in User.query.filter(User.email != None).filter(User.email != '').all()]
+    if not recipients:
+        flash('No users with email addresses found', 'warning')
+        return redirect(url_for('main.admin_dashboard'))
+
+    ok = send_mail(subject, message, recipients)
+    if ok:
+        flash(f'Broadcast sent to {len(recipients)} recipients', 'success')
+    else:
+        flash('Failed to send broadcast — check mail settings and logs', 'danger')
+    return redirect(url_for('main.admin_dashboard'))
+
+
 @main.route('/admin/create_user', methods=['POST'])
 @login_required
 @admin_required

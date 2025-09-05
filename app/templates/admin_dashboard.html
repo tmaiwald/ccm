@@ -67,4 +67,20 @@
       {% endfor %}
     </tbody>
   </table>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <h5 class="card-title">Broadcast message</h5>
+      <p class="small text-muted">Send a subject and message to all users that have an email address.</p>
+      <form method="post" action="{{ url_for('main.admin_broadcast') }}">
+        <div class="mb-2">
+          <input type="text" name="subject" class="form-control" placeholder="Subject" required>
+        </div>
+        <div class="mb-2">
+          <textarea name="message" class="form-control" rows="5" placeholder="Message body" required></textarea>
+        </div>
+        <button class="btn btn-danger">Send broadcast</button>
+      </form>
+    </div>
+  </div>
 {% endblock %}
