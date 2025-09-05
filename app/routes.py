@@ -207,10 +207,12 @@ def calendar_view():
     # compute all commitments for the current user (not limited to the week)
     commitments = []
     if current_user.is_authenticated:
+        # show only commitments from today onwards
         commitments = Proposal.query.outerjoin(Participant).filter(
             or_(Participant.user_id == current_user.id,
                 Proposal.cook_user_id == current_user.id,
-                Proposal.grocery_user_id == current_user.id)
+                Proposal.grocery_user_id == current_user.id),
+            Proposal.date >= today
         ).distinct().order_by(Proposal.date.asc(), Proposal.start_time.asc()).all()
 
     return render_template('calendar.html', days=days, recipes=recipes,
