@@ -41,6 +41,7 @@ app/static/uploads/
 
 # SQLite
 *.db
+*.db.bak
 *.sqlite3
 
 # Misc

@@ -91,4 +91,6 @@ class MailConfig(db.Model):
     password = db.Column(db.String(255), nullable=True)
     from_address = db.Column(db.String(255), nullable=True)
     site_host = db.Column(db.String(255), nullable=True)  # public host/URL for links (e.g. https://ccm-m.aiwald.de)
+    # Global on/off switch for all outgoing mail (admin-controlled). Default: off
+    mail_notifications_enabled = db.Column(db.Boolean, default=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

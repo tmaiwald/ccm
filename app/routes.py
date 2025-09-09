@@ -34,24 +34,41 @@ def admin_required(f):
 
 @main.before_app_request
 def load_mail_config():
-    # make mail config available in templates via g.mail_ok
+    # make mail config available in templates via g.mail_ok and g.mail_cfg
     g.mail_ok = False
     cfg = MailConfig.query.first()
+    g.mail_cfg = cfg
     if cfg and cfg.smtp_server and cfg.username and cfg.password and cfg.from_address:
         g.mail_ok = True
 
 
-def send_mail(subject, body, recipients):
+def send_mail(subject, text_body, recipients, html_body=None):
     # send mail using MailConfig if configured, otherwise return False
     cfg = MailConfig.query.first()
-    if not cfg or not cfg.smtp_server or not cfg.username or not cfg.password or not cfg.from_address:
+    # Global admin switch: treat missing or False as disabled (default: off)
+    if not cfg or not getattr(cfg, 'mail_notifications_enabled', False):
+        return False
+    if not cfg.smtp_server or not cfg.username or not cfg.password or not cfg.from_address:
         return False
     try:
         msg = EmailMessage()
         msg['Subject'] = subject
         msg['From'] = formataddr(("Cleverly Connected Meals (CCM)", cfg.from_address))
         msg['To'] = ', '.join(recipients)
-        msg.set_content(body)
+        # plain text part
+        msg.set_content(text_body)
+        # build HTML part if not provided
+        host = cfg.site_host.strip() if cfg and cfg.site_host else 'https://ccm-m.aiwald.de'
+        footer = f'<hr><p style="font-size:small;color:gray">Manage email notifications in your profile settings: <a href="{host.rstrip("/")}/profile">Profile settings</a></p>'
+        if html_body is None:
+            # simple paragraph conversion
+            paragraphs = [f"<p>{line}</p>" for line in text_body.split('\n') if line.strip()]
+            html_body = '<html><body>' + ''.join(paragraphs) + footer + '</body></html>'
+        else:
+            # append footer
+            html_body = html_body + footer
+        msg.add_alternative(html_body, subtype='html')
+
         if cfg.use_tls:
             s = smtplib.SMTP(cfg.smtp_server, cfg.smtp_port, timeout=10)
             s.starttls()
@@ -62,58 +79,41 @@ def send_mail(subject, body, recipients):
         s.quit()
         return True
     except Exception as e:
-        # Log exception
         current_app.logger.exception('Mail send failed: %s', e)
-        # Print full mail settings (including password) to console for debugging as requested
-        try:
-            info = (
-                f"Mail settings:\n"
-                f"  server: {cfg.smtp_server}\n"
-                f"  port: {cfg.smtp_port}\n"
-                f"  use_tls: {cfg.use_tls}\n"
-                f"  username: {cfg.username}\n"
-                f"  password: {cfg.password}\n"
-                f"  from_address: {cfg.from_address}\n"
-            )
-            # both logger and plain print so it appears on console
-            current_app.logger.error(info)
-            print(info)
-        except Exception:
-            # ignore logging errors
-            pass
         return False
 
 
 # helper to create nicer subjects and bodies for proposal-related mails
 def make_proposal_mail(proposal, action, actor, extra_text=None):
-    """Return (subject, body).
-    - action: a short verb like 'joined', 'left', 'claimed grocery duty', 'removed the proposal', 'left a message'
-    - actor: username or description of who performed the action
-    - extra_text: optional additional paragraph to include in the body
-
-    Subjects will use ' | ' separators and the short date format DD.MM.
-    The body includes a direct link to the proposal discussion on the assumed hostname https://ccm-m.aiwald.de
+    """Return (subject, text_body, html_body).
+    HTML is rendered from a template with full context.
     """
     short_date = proposal.date.strftime('%d.%m')
-    # subject includes actor/action compactly
-    subject = f"CCM: {proposal.recipe.title} | {short_date} | {actor} {action}"
+    subject = f"{actor} {action} | {proposal.recipe.title} | {short_date}"
 
-    # build a link to the discussion page on the assumed host
     try:
         discussion_path = url_for('main.proposal_discuss', proposal_id=proposal.id)
     except Exception:
         discussion_path = f"/proposal/{proposal.id}/discuss"
     cfg = MailConfig.query.first()
     host = cfg.site_host.strip() if cfg and cfg.site_host else 'https://ccm-m.aiwald.de'
-    # ensure no duplicate slashes
     discussion_url = f"{host.rstrip('/')}" + discussion_path
 
-    body_lines = [f"Hello,", "", f"{actor} {action} for the meal \"{proposal.recipe.title}\" on {short_date}."]
+    text_lines = [f"Hello,", "", f"{actor} {action} for the meal \"{proposal.recipe.title}\" on {short_date}."]
     if extra_text:
-        body_lines.extend(["", extra_text])
-    body_lines.extend(["", f"View the discussion and details here: {discussion_url}", "", "Best regards,", "Cleverly Connected Meals (CCM)"])
-    body = "\n".join(body_lines)
-    return subject, body
+        text_lines.extend(["", extra_text])
+    text_lines.extend(["", f"View the discussion and details here: {discussion_url}", "", "Best regards,", "Cleverly Connected Meals (CCM)"])
+    text_body = "\n".join(text_lines)
+
+    # render HTML template for nicer emails
+    try:
+        html_body = render_template('email/proposal_email.html', subject=subject, actor=actor, action=action, proposal_title=proposal.recipe.title, short_date=short_date, extra_text=extra_text, discussion_url=discussion_url, host=host)
+    except Exception:
+        # fallback to simple HTML
+        html_p = ''.join(f"<p>{line}</p>" for line in text_lines if line)
+        html_body = f"<html><body>{html_p}</body></html>"
+
+    return subject, text_body, html_body
 
 
 @main.route("/")
@@ -248,6 +248,11 @@ def propose_recipe(recipe_id, date_str):
     db.session.add(p)
     db.session.commit()
     flash('Proposal created', 'success')
+    # notify users who opted into new-proposal emails (exclude proposer)
+    recipients = [u.email for u in User.query.filter(User.id != current_user.id, User.email != None, User.email != '', User.notify_new_proposal == True).all()]
+    if recipients:
+        subj, text_body, html_body = make_proposal_mail(p, 'created a proposal', current_user.username)
+        send_mail(subj, text_body, recipients, html_body)
     return redirect(url_for('main.calendar_view', year=d.year, month=d.month))
 
 
@@ -268,6 +273,11 @@ def create_proposal(recipe_id, date_str):
     db.session.add(p)
     db.session.commit()
     flash('Proposal created', 'success')
+    # notify users who opted into new-proposal emails (exclude proposer)
+    recipients = [u.email for u in User.query.filter(User.id != current_user.id, User.email != None, User.email != '', User.notify_new_proposal == True).all()]
+    if recipients:
+        subj, text_body, html_body = make_proposal_mail(p, 'created a proposal', current_user.username)
+        send_mail(subj, text_body, recipients, html_body)
     return redirect(url_for('main.calendar_view'))
 
 
@@ -282,11 +292,11 @@ def join_proposal(proposal_id):
         db.session.add(part)
         db.session.commit()
         flash('Joined', 'success')
-        # notify other participants
-        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id]
+        # notify other participants who opted into discussion notifications
+        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
         if recipients:
-            subj, body = make_proposal_mail(p, 'joined the meal', current_user.username)
-            send_mail(subj, body, recipients)
+            subj, text_body, html_body = make_proposal_mail(p, 'joined the meal', current_user.username)
+            send_mail(subj, text_body, recipients, html_body)
     # decide where to redirect based on optional 'next' parameter
     next_param = (request.form.get('next') or request.args.get('next') or '').lower()
     if next_param == 'discuss':
@@ -302,13 +312,13 @@ def unjoin_proposal(proposal_id):
     part = Participant.query.filter_by(proposal_id=p.id, user_id=current_user.id).first()
     if part:
         # prepare recipients before removal
-        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id]
+        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
         db.session.delete(part)
         db.session.commit()
         flash('Left', 'success')
         if recipients:
-            subj, body = make_proposal_mail(p, 'left the meal', current_user.username)
-            send_mail(subj, body, recipients)
+            subj, text_body, html_body = make_proposal_mail(p, 'left the meal', current_user.username)
+            send_mail(subj, text_body, recipients, html_body)
     # redirect to either the discussion page or the calendar week depending on 'next'
     next_param = (request.form.get('next') or request.args.get('next') or '').lower()
     if next_param == 'discuss':
@@ -373,6 +383,11 @@ def propose_recipe_form():
     db.session.add(p)
     db.session.commit()
     flash('Proposal created', 'success')
+    # notify users who opted into new-proposal emails (exclude proposer)
+    recipients = [u.email for u in User.query.filter(User.id != current_user.id, User.email != None, User.email != '', User.notify_new_proposal == True).all()]
+    if recipients:
+        subj, text_body, html_body = make_proposal_mail(p, 'created a proposal', current_user.username)
+        send_mail(subj, text_body, recipients, html_body)
     return redirect(url_for('main.calendar_view', year=d.year, month=d.month))
 
 
@@ -449,8 +464,8 @@ def delete_proposal(proposal_id):
     db.session.commit()
     flash('Proposal removed', 'success')
     if recipients:
-        subj, body = make_proposal_mail(p, 'removed the proposal', current_user.username, extra_text=f'The proposal was removed by {current_user.username}.')
-        send_mail(subj, body, recipients)
+        subj, text_body, html_body = make_proposal_mail(p, 'removed the proposal', current_user.username, extra_text=f'The proposal was removed by {current_user.username}.')
+        send_mail(subj, text_body, recipients, html_body)
     return redirect(url_for('main.calendar_view', year=pdate.year, month=pdate.month))
 
 
@@ -467,18 +482,18 @@ def claim_grocery(proposal_id):
         p.grocery_user_id = None
         db.session.commit()
         flash('You unclaimed grocery duty', 'success')
-        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id]
+        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
         if recipients:
-            subj, body = make_proposal_mail(p, 'unclaimed grocery duty', current_user.username)
-            send_mail(subj, body, recipients)
+            subj, text_body, html_body = make_proposal_mail(p, 'unclaimed grocery duty', current_user.username)
+            send_mail(subj, text_body, recipients, html_body)
     else:
         p.grocery_user_id = current_user.id
         db.session.commit()
         flash('You will do the groceries', 'success')
-        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id]
+        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
         if recipients:
-            subj, body = make_proposal_mail(p, 'claimed grocery duty', current_user.username)
-            send_mail(subj, body, recipients)
+            subj, text_body, html_body = make_proposal_mail(p, 'claimed grocery duty', current_user.username)
+            send_mail(subj, text_body, recipients, html_body)
     return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
 
 
@@ -496,19 +511,19 @@ def claim_cook(proposal_id):
         db.session.commit()
         flash('You unclaimed cooking duty', 'success')
         # notify participants
-        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id]
+        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
         if recipients:
-            subj, body = make_proposal_mail(p, 'unclaimed cooking duty', current_user.username)
-            send_mail(subj, body, recipients)
+            subj, text_body, html_body = make_proposal_mail(p, 'unclaimed cooking duty', current_user.username)
+            send_mail(subj, text_body, recipients, html_body)
     else:
         p.cook_user_id = current_user.id
         db.session.commit()
         flash('You will cook the meal', 'success')
         # notify participants
-        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id]
+        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
         if recipients:
-            subj, body = make_proposal_mail(p, 'claimed cooking duty', current_user.username)
-            send_mail(subj, body, recipients)
+            subj, text_body, html_body = make_proposal_mail(p, 'claimed cooking duty', current_user.username)
+            send_mail(subj, text_body, recipients, html_body)
     return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
 
 
@@ -523,10 +538,10 @@ def proposal_discuss(proposal_id):
             db.session.add(m)
             db.session.commit()
             # notify participants (exclude the sender)
-            recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id]
+            recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
             if recipients:
-                subj, body = make_proposal_mail(p, 'left a message', current_user.username, extra_text=f'"{content}"')
-                send_mail(subj, body, recipients)
+                subj, text_body, html_body = make_proposal_mail(p, 'left a message', current_user.username, extra_text=f'"{content}"')
+                send_mail(subj, text_body, recipients, html_body)
             return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
     messages = Message.query.filter_by(proposal_id=p.id).order_by(Message.created_at.asc()).all()
     # pass explicit boolean whether current user has joined the proposal
@@ -562,6 +577,22 @@ def admin_mail_config():
         flash('Mail configuration saved', 'success')
         return redirect(url_for('main.admin_mail_config'))
     return render_template('admin_mail.html', cfg=cfg)
+
+# New admin endpoint to toggle global mail notifications
+@main.route('/admin/toggle_global_notifications', methods=['POST'])
+@login_required
+@admin_required
+def admin_toggle_global_notifications():
+    cfg = MailConfig.query.first()
+    if not cfg:
+        cfg = MailConfig()
+        db.session.add(cfg)
+    # checkbox uses hidden default '0' and checkbox '1'
+    enabled = bool(request.form.get('global_notifications'))
+    cfg.mail_notifications_enabled = enabled
+    db.session.commit()
+    flash('Global mail notification setting updated', 'success')
+    return redirect(url_for('main.admin_dashboard'))
 
 
 @main.route('/admin')
@@ -605,7 +636,7 @@ def admin_broadcast():
         return redirect(url_for('main.admin_dashboard'))
 
     # collect recipient emails
-    recipients = [u.email for u in User.query.filter(User.email != None).filter(User.email != '').all()]
+    recipients = [u.email for u in User.query.filter(User.email != None, User.email != '', User.notify_broadcast == True).all()]
     if not recipients:
         flash('No users with email addresses found', 'warning')
         return redirect(url_for('main.admin_dashboard'))
@@ -845,6 +876,6 @@ def change_start_time(proposal_id):
     recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id]
     if recipients:
         extra = f'New start time: {p.start_time.strftime("%H:%M") if p.start_time else "12:00"}'
-        subj, body = make_proposal_mail(p, 'changed the start time', current_user.username, extra_text=extra)
-        send_mail(subj, body, recipients)
+        subj, text_body, html_body = make_proposal_mail(p, 'changed the start time', current_user.username, extra_text=extra)
+        send_mail(subj, text_body, recipients, html_body)
     return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))

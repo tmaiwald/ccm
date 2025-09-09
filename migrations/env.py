@@ -15,6 +15,8 @@ sys.path.insert(0, project_dir)
 from app import db
 from app import create_app
 app = create_app()
+# Make Alembic use the app's configured DB URI instead of the value in alembic.ini
+config.set_main_option('sqlalchemy.url', app.config.get('SQLALCHEMY_DATABASE_URI', config.get_main_option('sqlalchemy.url')))
 with app.app_context():
     target_metadata = db.metadata
 
