@@ -879,3 +879,12 @@ def change_start_time(proposal_id):
         subj, text_body, html_body = make_proposal_mail(p, 'changed the start time', current_user.username, extra_text=extra)
         send_mail(subj, text_body, recipients, html_body)
     return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+
+
+@main.route('/profile')
+@login_required
+def my_profile():
+    """Redirect to the logged-in user's profile page.
+    This allows generic links like /profile in emails to work for recipients.
+    """
+    return redirect(url_for('main.profile', user_id=current_user.id))
