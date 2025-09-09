@@ -37,4 +37,31 @@
       </div>
     {% endfor %}
   </div>
+
+  <hr class="my-4">
+  <h4>Settings</h4>
+  <div class="card mb-3">
+    <div class="card-body">
+      <h6>Mail notifications</h6>
+      {% if current_user.is_authenticated and current_user.id == user.id %}
+        <form method="post" action="{{ url_for('main.profile_update_notifications', user_id=user.id) }}">
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" name="notify_new_proposal" id="notify_new_proposal" {% if user.notify_new_proposal %}checked{% endif %}>
+            <label class="form-check-label" for="notify_new_proposal">Notify me when a new proposal is added to the calendar</label>
+          </div>
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" name="notify_discussion" id="notify_discussion" {% if user.notify_discussion %}checked{% endif %}>
+            <label class="form-check-label" for="notify_discussion">Notify me about activity in discussions of meals I joined</label>
+          </div>
+          <div class="form-check mb-2">
+            <input class="form-check-input" type="checkbox" name="notify_broadcast" id="notify_broadcast" {% if user.notify_broadcast %}checked{% endif %}>
+            <label class="form-check-label" for="notify_broadcast">Notify me for admin broadcasts / news</label>
+          </div>
+          <button class="btn btn-sm btn-primary mt-2">Save settings</button>
+        </form>
+      {% else %}
+        <p class="small text-muted">Only the profile owner can change notification settings.</p>
+      {% endif %}
+    </div>
+  </div>
 {% endblock %}

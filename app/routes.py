@@ -9,6 +9,7 @@ from werkzeug.utils import secure_filename
 from functools import wraps
 import smtplib
 from email.message import EmailMessage
+from email.utils import formataddr
 from sqlalchemy import or_
 
 main = Blueprint("main", __name__)
@@ -48,7 +49,7 @@ def send_mail(subject, body, recipients):
     try:
         msg = EmailMessage()
         msg['Subject'] = subject
-        msg['From'] = cfg.from_address
+        msg['From'] = formataddr(("Cleverly Connected Meals (CCM)", cfg.from_address))
         msg['To'] = ', '.join(recipients)
         msg.set_content(body)
         if cfg.use_tls:
@@ -326,6 +327,23 @@ def profile(user_id):
     return render_template('profile.html', user=u, recipes=recipes, times_cooked=times_cooked)
 
 
+@main.route('/profile/<int:user_id>/notifications', methods=['POST'])
+@login_required
+def profile_update_notifications(user_id):
+    u = User.query.get_or_404(user_id)
+    # only allow the owner or admin to change settings
+    if current_user.id != u.id and not getattr(current_user, 'is_admin', False):
+        flash('Not allowed', 'warning')
+        return redirect(url_for('main.profile', user_id=user_id))
+    # checkboxes: present in form when checked
+    u.notify_new_proposal = bool(request.form.get('notify_new_proposal'))
+    u.notify_discussion = bool(request.form.get('notify_discussion'))
+    u.notify_broadcast = bool(request.form.get('notify_broadcast'))
+    db.session.commit()
+    flash('Notification settings updated', 'success')
+    return redirect(url_for('main.profile', user_id=user_id))
+
+
 @main.route('/proposal/propose', methods=['POST'])
 @login_required
 def propose_recipe_form():
@@ -597,6 +615,20 @@ def admin_broadcast():
         flash(f'Broadcast sent to {len(recipients)} recipients', 'success')
     else:
         flash('Failed to send broadcast — check mail settings and logs', 'danger')
+    return redirect(url_for('main.admin_dashboard'))
+
+
+@main.route('/admin/update_notifications/<int:user_id>', methods=['POST'])
+@login_required
+@admin_required
+def admin_update_notifications(user_id):
+    u = User.query.get_or_404(user_id)
+    # checkboxes: when unchecked browsers may omit them; we included hidden defaults in the form
+    u.notify_new_proposal = bool(request.form.get('notify_new_proposal'))
+    u.notify_discussion = bool(request.form.get('notify_discussion'))
+    u.notify_broadcast = bool(request.form.get('notify_broadcast'))
+    db.session.commit()
+    flash('User notification settings updated', 'success')
     return redirect(url_for('main.admin_dashboard'))
 
 

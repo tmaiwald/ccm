@@ -10,6 +10,10 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(128), nullable=False)
     avatar = db.Column(db.String(255), nullable=True)
     is_admin = db.Column(db.Boolean, default=False)
+    # per-user notification settings (all default to False)
+    notify_new_proposal = db.Column(db.Boolean, default=False)
+    notify_discussion = db.Column(db.Boolean, default=False)
+    notify_broadcast = db.Column(db.Boolean, default=False)
     recipes = db.relationship('Recipe', backref='author', lazy=True)
     # proposals created by this user. Explicit foreign_keys avoids ambiguity
     proposals = db.relationship('Proposal', backref='proposer', lazy=True, foreign_keys='Proposal.proposer_id')

@@ -36,38 +36,57 @@ def create_app():
 
         # create dummy data if none exists
         from .models import User, Recipe
-        if User.query.count() == 0:
-            u1 = User(username='alice', email='alice@example.com')
-            u1.set_password('password')
-            u2 = User(username='bob', email='bob@example.com')
-            u2.set_password('password')
-            u3 = User(username='carol', email='carol@example.com')
-            u3.set_password('password')
-            db.session.add_all([u1, u2, u3])
-            db.session.commit()
+        # avoid running queries that assume newer schema during migrations
+        from sqlalchemy.exc import OperationalError
+        from sqlalchemy import inspect
+        try:
+            if inspect(db.engine).has_table('user'):
+                if User.query.count() == 0:
+                    do_create = True
+                else:
+                    do_create = False
+            else:
+                do_create = False
+        except OperationalError:
+            # DB not ready / schema missing; skip creation
+            do_create = False
 
-            # create sample recipes
-            sample = [
-                ('Pasta Primavera', 'Pasta, Vegetables, Olive oil', 'Cook pasta, sauté veggies, combine.'),
-                ('Chicken Salad', 'Chicken, Lettuce, Mayo', 'Mix ingredients and serve chilled.'),
-                ('Veggie Stir-fry', 'Mixed veggies, Soy sauce', 'Stir-fry veggies, add sauce.'),
-                ('Tomato Soup', 'Tomatoes, Onion, Garlic', 'Simmer and blend.'),
-                ('Quinoa Bowl', 'Quinoa, Beans, Avocado', 'Cook quinoa and assemble bowl.'),
-            ]
-            users = [u1, u2, u3]
-            recipes = []
-            for i, (t, ing, ins) in enumerate(sample):
-                r = Recipe(title=t, ingredients=ing, instructions=ins, user_id=users[i % len(users)].id)
-                recipes.append(r)
-            db.session.add_all(recipes)
-            db.session.commit()
+        if do_create:
+             u1 = User(username='alice', email='alice@example.com')
+             u1.set_password('password')
+             u2 = User(username='bob', email='bob@example.com')
+             u2.set_password('password')
+             u3 = User(username='carol', email='carol@example.com')
+             u3.set_password('password')
+             db.session.add_all([u1, u2, u3])
+             db.session.commit()
 
-        # ensure an admin user exists
-        if not User.query.filter_by(username='admin').first():
-            admin = User(username='admin', email='admin@example.com', is_admin=True)
-            admin.set_password('admin')
-            db.session.add(admin)
-            db.session.commit()
+             # create sample recipes
+             sample = [
+                 ('Pasta Primavera', 'Pasta, Vegetables, Olive oil', 'Cook pasta, sauté veggies, combine.'),
+                 ('Chicken Salad', 'Chicken, Lettuce, Mayo', 'Mix ingredients and serve chilled.'),
+                 ('Veggie Stir-fry', 'Mixed veggies, Soy sauce', 'Stir-fry veggies, add sauce.'),
+                 ('Tomato Soup', 'Tomatoes, Onion, Garlic', 'Simmer and blend.'),
+                 ('Quinoa Bowl', 'Quinoa, Beans, Avocado', 'Cook quinoa and assemble bowl.'),
+             ]
+             users = [u1, u2, u3]
+             recipes = []
+             for i, (t, ing, ins) in enumerate(sample):
+                 r = Recipe(title=t, ingredients=ing, instructions=ins, user_id=users[i % len(users)].id)
+                 recipes.append(r)
+             db.session.add_all(recipes)
+             db.session.commit()
+
+         # ensure an admin user exists
+        try:
+            if inspect(db.engine).has_table('user') and not User.query.filter_by(username='admin').first():
+                admin = User(username='admin', email='admin@example.com', is_admin=True)
+                admin.set_password('admin')
+                db.session.add(admin)
+                db.session.commit()
+        except OperationalError:
+            # skip admin creation if schema not ready
+            pass
 
     return app
 

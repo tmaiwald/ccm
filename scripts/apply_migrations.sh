@@ -66,11 +66,73 @@ fi
 
 if [ -n "$DBFILE" ]; then
   echo "Using DB file: $DBFILE"
-  # add cook_user_id column if missing
-  echo "Adding column cook_user_id to proposal (if not exists)"
-  sqlite3 "$DBFILE" "PRAGMA foreign_keys=OFF; BEGIN TRANSACTION; ALTER TABLE proposal ADD COLUMN cook_user_id INTEGER; COMMIT; PRAGMA foreign_keys=ON;"
-  echo "ALTER applied. Please restart the app."
-  exit 0
+  # Prefer sqlite3 CLI if available, otherwise use Python fallback
+  if command -v sqlite3 >/dev/null 2>&1; then
+    echo "sqlite3 found, applying ALTER statements where needed"
+
+    # check and add proposal.cook_user_id if missing
+    if [ "$(sqlite3 "$DBFILE" "SELECT COUNT(*) FROM pragma_table_info('proposal') WHERE name='cook_user_id';")" -eq 0 ]; then
+      echo "Adding proposal.cook_user_id"
+      sqlite3 "$DBFILE" "PRAGMA foreign_keys=OFF; BEGIN TRANSACTION; ALTER TABLE proposal ADD COLUMN cook_user_id INTEGER; COMMIT; PRAGMA foreign_keys=ON;"
+    else
+      echo "proposal.cook_user_id already exists"
+    fi
+
+    # helper to add user columns if missing
+    add_user_col() {
+      col="$1"
+      if [ "$(sqlite3 "$DBFILE" "SELECT COUNT(*) FROM pragma_table_info('user') WHERE name='"$col"';")" -eq 0 ]; then
+        echo "Adding user.$col"
+        sqlite3 "$DBFILE" "PRAGMA foreign_keys=OFF; BEGIN TRANSACTION; ALTER TABLE \"user\" ADD COLUMN $col INTEGER DEFAULT 0; COMMIT; PRAGMA foreign_keys=ON;"
+      else
+        echo "user.$col already exists"
+      fi
+    }
+
+    add_user_col notify_new_proposal
+    add_user_col notify_discussion
+    add_user_col notify_broadcast
+
+    echo "Conditional ALTERs (sqlite3) complete. Please restart the app."
+    exit 0
+  else
+    echo "sqlite3 CLI not found; attempting Python fallback that only adds missing columns..."
+    python3 - <<'PY'
+import sqlite3, os, sys
+ROOT = os.getcwd()
+db = "instance/ccm.db" if os.path.exists(os.path.join(ROOT, "instance/ccm.db")) else ("ccm.db" if os.path.exists(os.path.join(ROOT, "ccm.db")) else None)
+if not db:
+    print("DB file not found")
+    sys.exit(1)
+con = sqlite3.connect(db)
+cur = con.cursor()
+
+def has(tbl, col):
+    cur.execute(f"PRAGMA table_info('{tbl}')")
+    return any(r[1] == col for r in cur.fetchall())
+
+cur.execute("PRAGMA foreign_keys=OFF;")
+try:
+    cur.execute("BEGIN;")
+    if not has('proposal', 'cook_user_id'):
+        cur.execute("ALTER TABLE proposal ADD COLUMN cook_user_id INTEGER;")
+        print('Added proposal.cook_user_id')
+    else:
+        print('proposal.cook_user_id already exists')
+    for col in ('notify_new_proposal','notify_discussion','notify_broadcast'):
+        if not has('user', col):
+            cur.execute(f"ALTER TABLE \"user\" ADD COLUMN {col} INTEGER DEFAULT 0;")
+            print(f'Added user.{col}')
+        else:
+            print(f'user.{col} already exists')
+    cur.execute("COMMIT;")
+finally:
+    cur.execute("PRAGMA foreign_keys=ON;")
+    con.close()
+PY
+    echo "Python fallback complete. Please restart the app."
+    exit 0
+  fi
 else
   echo "No sqlite DB file found to alter. Exiting with failure."
   exit 1
