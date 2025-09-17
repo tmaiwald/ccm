@@ -70,7 +70,8 @@
               </div>
               <div class="card-body p-2">
                 {% for p in day.proposals %}
-                  <div class="proposal p-2 mb-2 border rounded">
+                  <div class="proposal p-2 mb-2 border rounded" data-bs-toggle="tooltip" data-bs-placement="top" title="Discuss this proposal">
+                    <a class="stretched-link" href="{{ url_for('main.proposal_discuss', proposal_id=p.id) }}" aria-hidden="true"></a>
                     <div class="d-flex justify-content-between align-items-start">
                       <div>
                         <strong class="d-block">{{ p.recipe.title }}</strong>
@@ -95,7 +96,6 @@
                                 <button class="btn btn-sm btn-primary">Join</button>
                               </form>
                             {% endif %}
-                            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('main.proposal_discuss', proposal_id=p.id) }}">Discuss</a>
                             {% if p.proposer_id == current_user.id or current_user.is_admin %}
                               <form method="post" action="{{ url_for('main.delete_proposal', proposal_id=p.id) }}">
                                 <button class="btn btn-sm btn-outline-danger">Delete</button>
@@ -110,8 +110,13 @@
                 {% endfor %}
 
                 {% if current_user.is_authenticated %}
-                  <div class="mb-2 d-flex justify-content-end">
-                    <button class="btn btn-sm btn-outline-primary rounded-circle d-inline-flex align-items-center justify-content-center" style="width:36px;height:36px;padding:0;" onclick="openProposeModal('{{ day.date.isoformat() }}')" title="Propose meal" aria-label="Propose meal">+</button>
+                  <div class="mb-2 d-flex justify-content-end align-items-center">
+                    <div class="d-flex align-items-center">
+                      <button type="button" class="propose-btn" onclick="openProposeModal('{{ day.date.isoformat() }}')" title="Propose meal" aria-label="Propose meal">+</button>
+                      {% if day.proposals|length == 0 %}
+                        <small class="propose-hint ms-2 d-none d-md-inline">Propose a meal for this day</small>
+                      {% endif %}
+                    </div>
                   </div>
                 {% endif %}
 
@@ -122,6 +127,8 @@
       </div>
     </div>
   </div>
+
+  <div class="mt-2 d-none d-md-block"><small class="text-muted">Discuss and organize proposals by clicking on the respective card elements</small></div>
 
   <!-- Modal for selecting recipe -->
   <div class="modal fade" id="proposeModal" tabindex="-1" aria-hidden="true">
@@ -167,15 +174,87 @@
   </script>
 
   <style>
-  .calendar-grid { display: flex; flex-wrap: wrap; }
-  .day-card { min-height: 160px; }
+  /* center and wrap the calendar days so the grid fits their size */
+  .calendar-grid {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center; /* center the row of day columns */
+    gap: 0.5rem; /* small gap between day columns */
+    margin: 0 auto;
+  }
+  /* make each column size to its content and not stretch full width */
+  .calendar-grid > div {
+    flex: 0 1 220px; /* preferred basis 220px, allow shrinking on small screens */
+    max-width: 220px;
+    display: flex;
+  }
+  .day-card { width: 100%; }
+
+  /* ensure on very small screens columns can occupy full width */
+  @media (max-width: 480px) {
+    .calendar-grid > div {
+      flex: 0 1 calc(100% - 1rem);
+      max-width: 100%;
+    }
+  }
+
+  /* propose button: much lighter, more transparent accent but visible */
+  .propose-btn {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: 50%;
+    border: 1px solid rgba(67,89,102,0.45);
+    background: rgba(67,89,102,0.35);
+    /* lighter white for the plus so it reads less heavy */
+    color: rgba(255,255,255,0.88);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600; /* lighter than before */
+    font-size: 0.9rem; /* smaller so the + is not squeezed */
+    line-height: 1;
+    box-shadow: 0 4px 8px rgba(67,89,102,0.08);
+    transition: box-shadow 160ms ease, transform 160ms ease, background-color 160ms ease, border-color 160ms ease;
+    backdrop-filter: blur(1px);
+    -webkit-backdrop-filter: blur(1px);
+    position: relative;
+    z-index: 5;
+    cursor: pointer;
+    /* remove heavy text-shadow to keep the glyph crisp */
+    text-shadow: none;
+  }
+  .propose-btn:hover, .propose-btn:focus {
+    box-shadow: 0 6px 14px rgba(67,89,102,0.10);
+    transform: translateY(-1px);
+    background: rgba(67,89,102,0.5);
+    border-color: rgba(67,89,102,0.5);
+    outline: none;
+  }
+  .propose-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 4px 8px rgba(67,89,102,0.08);
+  }
+
+  /* hint next to propose button: smaller and much lighter */
+  .propose-hint {
+    font-size: 0.75rem;
+    color: rgba(0,0,0,0.45);
+    opacity: 0.6;
+    font-weight: 400;
+    line-height: 1;
+  }
+
+  /* on dark backgrounds (if any), ensure hint remains subtle */
+  .day-card .propose-hint { color: rgba(0,0,0,0.45); }
+
+  /* preserve other styles */
   .proposal { background: #f8f9fa; }
-  /* Commitment card tweaks: neutral header, consistent heights */
   .commit-card { display:flex; flex-direction:column; min-height:140px; }
   .commit-card .card-body { flex:1; }
   .commit-card .card-header { background: transparent; border-bottom:1px solid #e9ecef; }
   .commit-card .card-title a { text-decoration:none; color:inherit; }
-  /* subtle material-like shadow below the top bar */
-  .top-bar { background: #fff; padding: 0.45rem; border-radius: 0.25rem; box-shadow: 0 2px 6px rgba(0,0,0,0.12); }
+  .top-bar { background: transparent; padding: 0; border-radius: 0; box-shadow: none; align-items: center; }
   </style>
+
 {% endblock %}

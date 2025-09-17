@@ -10,9 +10,12 @@
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <style>
-      /* subtle material-like shadow under the main navbar */
+      /* more pronounced material-like shadow under the main navbar */
       .navbar {
-        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        box-shadow: 0 12px 40px rgba(0,0,0,0.22), 0 4px 12px rgba(0,0,0,0.08);
+        border-bottom: 1px solid rgba(0,0,0,0.06);
+        backdrop-filter: blur(3px);
+        -webkit-backdrop-filter: blur(3px);
         z-index: 1030;
       }
     </style>
@@ -24,34 +27,30 @@
 
         <div class="d-flex ms-auto align-items-center">
           {% if current_user.is_authenticated %}
-            <a class="btn btn-light me-2" href="{{ url_for('main.add_recipe') }}">Add Recipe</a>
-            <a class="btn btn-light me-2" href="{{ url_for('main.recipes_list') }}">Recipes</a>
 
-            <!-- calendar icon -->
-            <a class="btn btn-light me-2 p-2" href="{{ url_for('main.calendar_view') }}" title="Calendar" aria-label="Calendar">
+            {% if current_user.is_admin %}
+              <a class="nav-icon-btn me-2 admin-btn" href="{{ url_for('main.admin_dashboard') }}" title="Admin" aria-label="Admin">
+                <small style="font-size:0.85rem;font-weight:600;color:inherit;text-transform:lowercase;line-height:1;">admin</small>
+              </a>
+            {% endif %}
+
+            <a class="nav-icon-btn me-2" href="{{ url_for('main.recipes_list') }}" title="Recipes" aria-label="Recipes">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h1v1H2V3zm0 4h1v1H2V7zm0 4h1v1H2v-1zM4 3h10v1H4V3zm0 4h10v1H4V7zm0 4h10v1H4v-1z"/></svg>
+            </a>
+
+            <a class="nav-icon-btn me-2" href="{{ url_for('main.calendar_view') }}" title="Calendar" aria-label="Calendar">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16">
                 <path d="M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h.5A1.5 1.5 0 0 1 15 2.5v11A1.5 1.5 0 0 1 13.5 15h-11A1.5 1.5 0 0 1 1 13.5v-11A1.5 1.5 0 0 1 2.5 1H3V.5a.5.5 0 0 1 .5-.5zM2.5 3a.5.5 0 0 0-.5.5V5h12V3.5a.5.5 0 0 0-.5-.5h-11zM14 6H2v7.5a.5.5 0 0 0 .5.5h11a.5.5 0 0 0 .5-.5V6z"/>
               </svg>
             </a>
 
-            <!-- users icon: two silhouettes, white on blue -->
-            <a class="me-2 p-2 d-inline-flex align-items-center justify-content-center" href="{{ url_for('main.users_overview') }}" title="Users" aria-label="Users" style="background:#0d6efd;color:#fff;border-radius:6px;">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16" style="color:inherit;">
-                <path d="M5.5 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM10.5 3a2 2 0 1 1 0 4 2 2 0 0 1 0-4z" fill="currentColor"/>
-                <path d="M1 13s1-3 4-3 4 3 4 3H1zm9 0s.5-2 3-2 3 2 3 2H10z" fill="currentColor"/>
-              </svg>
+            <a class="nav-icon-btn me-2" href="{{ url_for('main.users_overview') }}" title="Users" aria-label="Users">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16" style="color:inherit;"><path d="M5.5 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM10.5 3a2 2 0 1 1 0 4 2 2 0 0 1 0-4z" fill="currentColor"/><path d="M1 13s1-3 4-3 4 3 4 3H1zm9 0s.5-2 3-2 3 2 3 2H10z" fill="currentColor"/></svg>
             </a>
 
-            {% if current_user.is_admin %}
-              <a class="btn btn-warning me-2 text-dark" href="{{ url_for('main.admin_dashboard') }}">Admin</a>
-            {% endif %}
-
-            <!-- profile icon -->
-            <a class="btn btn-outline-light me-2 p-2" href="{{ url_for('main.profile', user_id=current_user.id) }}" title="Profile" aria-label="Profile">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16">
-                <path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/>
-                <path d="M14 14s-1-4-6-4-6 4-6 4v1h12v-1z"/>
-              </svg>
+            <!-- changed profile icon to gear and label -->
+            <a class="nav-icon-btn me-2" href="{{ url_for('main.profile', user_id=current_user.id) }}" title="Profile settings" aria-label="Profile settings">
+              <span class="material-icons" style="font-size:20px;line-height:1;">settings</span>
             </a>
 
             <div class="me-3 text-white d-none d-md-block">
@@ -59,8 +58,7 @@
               <strong>{{ current_user.username }}</strong>
             </div>
 
-            <!-- logout icon -->
-            <a class="btn btn-outline-light p-2" href="{{ url_for('auth.logout') }}" title="Log out" aria-label="Log out">
+            <a class="nav-icon-btn" href="{{ url_for('auth.logout') }}" title="Log out" aria-label="Log out">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16">
                 <path fill-rule="evenodd" d="M6 2a1 1 0 0 0-1 1v2h1V3h6v10H6v-2H5v2a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1H6z"/>
                 <path fill-rule="evenodd" d="M11.854 8.354a.5.5 0 0 0 0-.708L9.172 5.0a.5.5 0 1 0-.708.708L10.293 7.5H3.5a.5.5 0 0 0 0 1h6.793l-1.829 1.792a.5.5 0 0 0 .708.708l2.682-2.682z"/>
@@ -107,5 +105,11 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+   <script>
+    document.addEventListener('DOMContentLoaded', function(){
+      var tipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+      tipTriggerList.forEach(function (el) { new bootstrap.Tooltip(el); });
+    });
+   </script>
   </body>
 </html>

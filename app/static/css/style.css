@@ -17,6 +17,24 @@ body { font-family: 'Roboto', system-ui, -apple-system, 'Segoe UI', Roboto, 'Hel
 /* Floating + button tweak */
 .btn-outline-primary.rounded-circle { background: #fff; border: 1px solid rgba(13,110,253,0.2); color: #0d6efd; font-weight:500; }
 
+/* navbar button alignment: ensure consistent height for small buttons added to pages */
+.align-btn { height: 36px; display:inline-flex; align-items:center; }
+
+/* make the Add Recipe button cleaner (no white background, use solid primary) */
+.btn-primary { background: #0d6efd; border-color: #0d6efd; }
+.btn-primary:hover { background: #0b5ed7; border-color: #0b5ed7; }
+
+/* navbar icon buttons */
+.nav-icon-btn { display:inline-flex; align-items:center; justify-content:center; width:40px; height:40px; border-radius:8px; color:#fff; text-decoration:none; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06); padding:6px; transition: background .12s ease, transform .06s ease, box-shadow .12s ease; }
+.nav-icon-btn svg { width:20px; height:20px; }
+.nav-icon-btn:hover { background: rgba(255,255,255,0.12); box-shadow: 0 4px 12px rgba(0,0,0,0.12); transform: translateY(-2px); text-decoration:none; }
+.nav-icon-btn:focus { outline: none; box-shadow: 0 0 0 4px rgba(13,110,253,0.12); }
+.accent-btn { background:#0d6efd; color:#fff; border-radius:8px; border-color: #0d6efd; }
+
+/* Admin button styles */
+.admin-btn { background: #dc3545; border-color: rgba(255,255,255,0.06); color: #fff; }
+.admin-btn:hover { background: #c82333; box-shadow: 0 6px 16px rgba(0,0,0,0.16); transform: translateY(-2px); }
+
 /* Badge tweak */
 .badge.bg-primary { background:#0d6efd; color:#fff; border-radius:8px; }
 
@@ -27,3 +45,64 @@ img { border-radius: 8px; }
 @media (max-width: 576px) {
   .day-card { min-height: 140px; }
 }
+
+:root {
+  --ccm-join: #52ae32; /* green used for join buttons and primary actions */
+  --ccm-join-dark: #3f8f28; /* slightly darker on hover */
+  --ccm-accent: #435966; /* darker slate used for action bar / navbar */
+}
+
+/* action bar / navbar override */
+.navbar.bg-primary {
+  background-color: var(--ccm-accent) !important;
+}
+
+/* primary / join buttons use CCM green */
+.btn-primary {
+  background: var(--ccm-join);
+  border-color: var(--ccm-join);
+}
+.btn-primary:hover {
+  background: var(--ccm-join-dark);
+  border-color: var(--ccm-join-dark);
+}
+
+/* accent helper used for small action buttons */
+.accent-btn { background:var(--ccm-join); color:#fff; border-radius:8px; border-color: var(--ccm-join); }
+
+/* focus ring for icon buttons use join color */
+.nav-icon-btn:focus { outline: none; box-shadow: 0 0 0 4px rgba(82,174,50,0.12); }
+
+/* badges that used to be primary should follow new join color */
+.badge.bg-primary { background:var(--ccm-join); color:#fff; border-radius:8px; }
+
+/* keep admin button red-ish as before */
+.admin-btn { background: #dc3545; border-color: rgba(255,255,255,0.06); color: #fff; }
+.admin-btn:hover { background: #c82333; box-shadow: 0 6px 16px rgba(0,0,0,0.16); transform: translateY(-2px); }
+
+/* Calendar: highlight today's header with site accent instead of Bootstrap danger */
+.day-card .card-header.bg-danger {
+  background-color: var(--ccm-accent) !important;
+  color: #fff !important;
+  border-color: rgba(0,0,0,0.06);
+}
+
+/* stronger material elevation for the main navbar */
+.navbar {
+  box-shadow: 0 8px 28px rgba(0,0,0,0.16), 0 2px 6px rgba(0,0,0,0.06);
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+}
+
+/* slight vertical gradient to give depth while keeping the site accent color */
+.navbar.bg-primary {
+  background-image: linear-gradient(rgba(0,0,0,0.02), rgba(0,0,0,0.04));
+}
+
+/* make the brand a bit more prominent */
+.navbar .navbar-brand {
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+/* slight backdrop blur on icon buttons to feel elevated */
+.nav-icon-btn { backdrop-filter: blur(2px); }
