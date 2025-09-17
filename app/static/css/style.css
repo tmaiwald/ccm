@@ -106,3 +106,22 @@ img { border-radius: 8px; }
 
 /* slight backdrop blur on icon buttons to feel elevated */
 .nav-icon-btn { backdrop-filter: blur(2px); }
+
+/* Mobile: subtle different notification background to stand out less on small screens */
+@media (max-width: 767px) {
+  .alert {
+    background-color: #f1f5f8; /* light grey-blue */
+    color: #093244; /* darker slate for legibility */
+    border-color: rgba(9,50,68,0.08);
+  }
+  /* keep danger alerts still readable but a bit softer */
+  .alert.alert-danger {
+    background-color: #fdecea;
+    color: #6b1b1b;
+    border-color: rgba(107,27,27,0.08);
+  }
+  /* make close button slightly more visible on the new backgrounds */
+  .alert .btn-close {
+    filter: brightness(0.9);
+  }
+}
