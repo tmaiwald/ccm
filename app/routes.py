@@ -654,12 +654,40 @@ def admin_broadcast():
 @admin_required
 def admin_update_notifications(user_id):
     u = User.query.get_or_404(user_id)
+    # allow admin to change email as well
+    email = (request.form.get('email') or '').strip()
+    if email == '':
+        email = None
+    # remember old email for notifications
+    old_email = u.email
+    if email:
+        other = User.query.filter(User.email == email, User.id != u.id).first()
+        if other:
+            flash('Email already in use by another account', 'warning')
+            return redirect(url_for('main.admin_dashboard'))
+    u.email = email
     # checkboxes: when unchecked browsers may omit them; we included hidden defaults in the form
     u.notify_new_proposal = bool(request.form.get('notify_new_proposal'))
     u.notify_discussion = bool(request.form.get('notify_discussion'))
     u.notify_broadcast = bool(request.form.get('notify_broadcast'))
     db.session.commit()
-    flash('User notification settings updated', 'success')
+
+    # send notifications about email change
+    try:
+        if old_email and old_email != (email or ''):
+            # notify old address that mail was moved
+            subj = f"Mail address has been moved to {email or 'removed'}"
+            body = f"Hello {u.username},\n\nYour account email address for Cleverly Connected Meals (CCM) has been changed by admin {current_user.username}.\nNew address: {email or '(none)'}\n\nIf you did not request this change, please contact your administrator.\n\nBest regards,\nCCM"
+            send_mail(subj, body, [old_email])
+        if email and old_email != email:
+            # confirm to new address
+            subj2 = "You will be notified via this email address"
+            body2 = f"Hello {u.username},\n\nThis email address ({email}) will be used to send notifications from Cleverly Connected Meals (CCM).\nIf you did not expect this, please contact your administrator.\n\nBest regards,\nCCM"
+            send_mail(subj2, body2, [email])
+    except Exception:
+        current_app.logger.exception('Failed to send email-change notifications')
+
+    flash('User updated', 'success')
     return redirect(url_for('main.admin_dashboard'))
 
 
@@ -888,3 +916,78 @@ def my_profile():
     This allows generic links like /profile in emails to work for recipients.
     """
     return redirect(url_for('main.profile', user_id=current_user.id))
+
+
+@main.route('/profile/<int:user_id>/update', methods=['POST'])
+@login_required
+def profile_update_credentials(user_id):
+    u = User.query.get_or_404(user_id)
+    # only allow the owner or admin to change credentials
+    if current_user.id != u.id and not getattr(current_user, 'is_admin', False):
+        flash('Not allowed', 'warning')
+        return redirect(url_for('main.profile', user_id=user_id))
+
+    email = (request.form.get('email') or '').strip()
+    # normalize empty strings to None
+    if email == '':
+        email = None
+
+    # check email uniqueness when provided
+    if email:
+        other = User.query.filter(User.email == email, User.id != u.id).first()
+        if other:
+            flash('Email already in use by another account', 'warning')
+            return redirect(url_for('main.profile', user_id=user_id))
+
+    # handle password change
+    new_password = request.form.get('new_password') or ''
+    new_password_confirm = request.form.get('new_password_confirm') or ''
+    current_password = request.form.get('current_password') or ''
+
+    changed = False
+    # remember old email for notifications
+    old_email = u.email
+    # update email if changed
+    if (email or '') != (u.email or ''):
+        u.email = email
+        changed = True
+
+    # if user wants to change password
+    if new_password or new_password_confirm:
+        if new_password != new_password_confirm:
+            flash('New password and confirmation do not match', 'warning')
+            return redirect(url_for('main.profile', user_id=user_id))
+        # if current user is admin editing another user, allow without current password
+        if current_user.id != u.id and getattr(current_user, 'is_admin', False):
+            # admin handled elsewhere; but allow setting here
+            u.set_password(new_password)
+            changed = True
+        else:
+            # require current password for owner
+            if not u.check_password(current_password):
+                flash('Current password is incorrect', 'warning')
+                return redirect(url_for('main.profile', user_id=user_id))
+            u.set_password(new_password)
+            changed = True
+
+    if changed:
+        db.session.commit()
+
+        # notify about email change when user updates their own email
+        try:
+            if old_email and old_email != (email or ''):
+                subj = f"Mail address has been moved to {email or 'removed'}"
+                body = f"Hello {u.username},\n\nYour account email address for Cleverly Connected Meals (CCM) has been changed.\nNew address: {email or '(none)'}\n\nIf you did not request this change, please contact your administrator.\n\nBest regards,\nCCM"
+                send_mail(subj, body, [old_email])
+            if email and old_email != email:
+                subj2 = "You will be notified via this email address"
+                body2 = f"Hello {u.username},\n\nThis email address ({email}) will be used to send notifications from Cleverly Connected Meals (CCM).\nIf you did not expect this, please contact your administrator.\n\nBest regards,\nCCM"
+                send_mail(subj2, body2, [email])
+        except Exception:
+            current_app.logger.exception('Failed to send email-change notifications')
+
+        flash('Account information updated', 'success')
+    else:
+        flash('No changes detected', 'info')
+
+    return redirect(url_for('main.profile', user_id=user_id))

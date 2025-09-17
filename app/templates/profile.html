@@ -64,4 +64,34 @@
       {% endif %}
     </div>
   </div>
+
+  {% if current_user.is_authenticated and current_user.id == user.id %}
+  <div class="card mb-3">
+    <div class="card-body">
+      <h6>Account</h6>
+      <form method="post" action="{{ url_for('main.profile_update_credentials', user_id=user.id) }}">
+        <div class="mb-2">
+          <label class="form-label">Email</label>
+          <input type="email" name="email" class="form-control" value="{{ user.email or '' }}" placeholder="you@example.com">
+        </div>
+        <hr>
+        <p class="small text-muted">Fill in the fields below to change your password. You must provide your current password. Leave empty to keep your password.</p>
+        <div class="mb-2">
+          <label class="form-label">Current password</label>
+          <input type="password" name="current_password" class="form-control" autocomplete="current-password">
+        </div>
+        <div class="mb-2">
+          <label class="form-label">New password</label>
+          <input type="password" name="new_password" class="form-control" autocomplete="new-password">
+        </div>
+        <div class="mb-2">
+          <label class="form-label">Confirm new password</label>
+          <input type="password" name="new_password_confirm" class="form-control" autocomplete="new-password">
+        </div>
+        <button class="btn btn-sm btn-primary mt-2">Update account</button>
+      </form>
+    </div>
+  </div>
+  {% endif %}
+
 {% endblock %}
