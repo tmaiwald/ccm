@@ -1,8 +1,15 @@
 {% extends "base.html" %}
 
 {% block content %}
-  <h2>Recipes</h2>
-  <p>Browse recipes and propose them for lunch.</p>
+  <div class="d-flex align-items-center mb-3">
+    <div>
+      <h2 class="mb-0">Recipes</h2>
+      <p class="mb-0">Browse recipes.</p>
+    </div>
+    <div class="ms-auto">
+      <a class="btn btn-primary" href="{{ url_for('main.add_recipe') }}">New recipe</a>
+    </div>
+  </div>
 
   <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-4">
     {% for r in recipes %}
