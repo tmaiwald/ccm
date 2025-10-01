@@ -12,6 +12,11 @@ from email.message import EmailMessage
 from email.utils import formataddr
 from sqlalchemy import or_
 
+from PIL import Image
+import io
+import uuid
+from datetime import datetime
+
 main = Blueprint("main", __name__)
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'static', 'uploads')
@@ -30,6 +35,51 @@ def admin_required(f):
             return redirect(url_for('main.index'))
         return f(*args, **kwargs)
     return wrapper
+
+
+def make_upload_filename(original_filename, username):
+    """Return a safe filename: <date>_<username>_<uuid4>.<ext>
+    Example: 2025-10-01_timmaiwald_9f1b2c3d4e5f.jpg
+    """
+    ext = ''
+    if '.' in original_filename:
+        ext = original_filename.rsplit('.', 1)[1].lower()
+    unique = uuid.uuid4().hex[:12]
+    datepart = datetime.utcnow().strftime('%Y%m%d')
+    uname = ''.join(c for c in username if c.isalnum() or c in ('-', '_')).lower()[:24]
+    return f"{datepart}_{uname}_{unique}.{ext}"
+
+
+def compress_image(file_stream, ext, max_size=(1600, 1600), quality=85):
+    """Open an image from file_stream (werkzeug FileStorage .stream or bytes), resize if larger than max_size
+    and return bytes for the compressed image.
+    """
+    try:
+        img = Image.open(file_stream)
+    except Exception:
+        # not an image
+        return None
+    # convert PNG with alpha to RGB+white background for JPEG output if needed
+    original_mode = img.mode
+    if img.mode in ("RGBA", "LA"):
+        background = Image.new("RGBA", img.size, (255, 255, 255, 255))
+        background.paste(img, mask=img.split()[-1])
+        img = background.convert('RGB')
+    elif img.mode != 'RGB':
+        img = img.convert('RGB')
+
+    # resize if bigger than max_size
+    img.thumbnail(max_size, Image.LANCZOS)
+
+    out = io.BytesIO()
+    # use JPEG for jpg/jpeg, otherwise PNG
+    if ext in ('jpg', 'jpeg'):
+        img.save(out, format='JPEG', quality=quality, optimize=True)
+    else:
+        # for png keep optimize but reduce if possible
+        img.save(out, format='PNG', optimize=True)
+    out.seek(0)
+    return out
 
 
 @main.before_app_request
@@ -155,13 +205,24 @@ def add_recipe():
             r.total_time = None
         r.level = level if level else None
 
-        # handle image upload
+        # handle image upload (rename + compress)
         file = request.files.get('image')
         if file and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            dst = os.path.join(UPLOAD_FOLDER, filename)
-            file.save(dst)
-            r.image = filename
+            original = secure_filename(file.filename)
+            ext = original.rsplit('.', 1)[1].lower() if '.' in original else 'jpg'
+            newname = make_upload_filename(original, current_user.username)
+            dst = os.path.join(UPLOAD_FOLDER, newname)
+            # ensure upload folder exists
+            os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+            # compress/resize large images; if compress_image returns None, fall back to saving raw
+            compressed = compress_image(file.stream, ext)
+            if compressed:
+                with open(dst, 'wb') as f:
+                    f.write(compressed.read())
+            else:
+                file.stream.seek(0)
+                file.save(dst)
+            r.image = newname
 
         db.session.add(r)
         db.session.commit()
@@ -223,11 +284,67 @@ def calendar_view():
                            today=today, commitments=commitments)
 
 
+def make_thumbnail(saved_path, thumb_size=(400, 300), bg_color=(255,255,255)):
+    """Create a thumbnail JPG for the given saved image path.
+    Returns the thumbnail filename (basename) or None on failure.
+    Thumbnail filename convention: <origname>_thumb.jpg
+    """
+    try:
+        if not os.path.exists(saved_path):
+            return None
+        img = Image.open(saved_path)
+    except Exception:
+        return None
+    try:
+        # Convert to RGB for JPEG
+        if img.mode in ("RGBA", "LA"):
+            background = Image.new('RGB', img.size, bg_color)
+            background.paste(img, mask=img.split()[-1])
+            img = background
+        elif img.mode != 'RGB':
+            img = img.convert('RGB')
+
+        img.thumbnail(thumb_size, Image.LANCZOS)
+        base, _ = os.path.splitext(os.path.basename(saved_path))
+        thumb_name = f"{base}_thumb.jpg"
+        thumb_path = os.path.join(UPLOAD_FOLDER, thumb_name)
+        # Ensure folder exists
+        os.makedirs(os.path.dirname(thumb_path), exist_ok=True)
+        img.save(thumb_path, format='JPEG', quality=80, optimize=True)
+        return thumb_name
+    except Exception:
+        current_app.logger.exception('Thumbnail creation failed for %s', saved_path)
+        return None
+
+
 @main.route('/recipes')
 @login_required
 def recipes_list():
     # show all recipes (not only user's) so users can browse and propose any recipe
     recipes = Recipe.query.order_by(Recipe.created_at.desc()).all()
+
+    # attach thumbnail URL if thumbnail file exists
+    for r in recipes:
+        r.thumb_url = None
+        if getattr(r, 'image', None):
+            base, ext = os.path.splitext(r.image)
+            thumb_name = f"{base}_thumb.jpg"
+            thumb_path = os.path.join(UPLOAD_FOLDER, thumb_name)
+            if os.path.exists(thumb_path):
+                try:
+                    r.thumb_url = url_for('static', filename='uploads/' + thumb_name)
+                except Exception:
+                    r.thumb_url = None
+            else:
+                # if thumbnail missing but original exists, attempt to create it
+                orig_path = os.path.join(UPLOAD_FOLDER, r.image)
+                created = make_thumbnail(orig_path)
+                if created:
+                    try:
+                        r.thumb_url = url_for('static', filename='uploads/' + created)
+                    except Exception:
+                        r.thumb_url = None
+
     return render_template('recipes_list.html', recipes=recipes)
 
 
@@ -399,13 +516,22 @@ def upload_recipe_image():
     if not file or not allowed_file(file.filename):
         flash('Invalid image', 'warning')
         return redirect(url_for('main.recipes_list'))
-    filename = secure_filename(file.filename)
-    dst = os.path.join(UPLOAD_FOLDER, filename)
-    file.save(dst)
+    original = secure_filename(file.filename)
+    ext = original.rsplit('.', 1)[1].lower() if '.' in original else 'jpg'
+    newname = make_upload_filename(original, current_user.username)
+    dst = os.path.join(UPLOAD_FOLDER, newname)
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    compressed = compress_image(file.stream, ext)
+    if compressed:
+        with open(dst, 'wb') as f:
+            f.write(compressed.read())
+    else:
+        file.stream.seek(0)
+        file.save(dst)
     if recipe_id:
         r = Recipe.query.get(int(recipe_id))
         if r and r.user_id == current_user.id:
-            r.image = filename
+            r.image = newname
             db.session.commit()
     flash('Image uploaded', 'success')
     return redirect(url_for('main.recipes_list'))
@@ -418,10 +544,19 @@ def upload_avatar():
     if not file or not allowed_file(file.filename):
         flash('Invalid image', 'warning')
         return redirect(url_for('main.profile', user_id=current_user.id))
-    filename = secure_filename(file.filename)
-    dst = os.path.join(UPLOAD_FOLDER, filename)
-    file.save(dst)
-    current_user.avatar = filename
+    original = secure_filename(file.filename)
+    ext = original.rsplit('.', 1)[1].lower() if '.' in original else 'jpg'
+    newname = make_upload_filename(original, current_user.username)
+    dst = os.path.join(UPLOAD_FOLDER, newname)
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    compressed = compress_image(file.stream, ext)
+    if compressed:
+        with open(dst, 'wb') as f:
+            f.write(compressed.read())
+    else:
+        file.stream.seek(0)
+        file.save(dst)
+    current_user.avatar = newname
     db.session.commit()
     flash('Avatar updated', 'success')
     return redirect(url_for('main.profile', user_id=current_user.id))
@@ -829,10 +964,28 @@ def edit_recipe(recipe_id):
         # handle optional image upload on edit
         file = request.files.get('image')
         if file and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            dst = os.path.join(UPLOAD_FOLDER, filename)
-            file.save(dst)
-            r.image = filename
+            # handle upload: rename, compress/resize and create thumbnail
+            original = secure_filename(file.filename)
+            ext = original.rsplit('.', 1)[1].lower() if '.' in original else 'jpg'
+            newname = make_upload_filename(original, current_user.username)
+            dst = os.path.join(UPLOAD_FOLDER, newname)
+            os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+            # compress/resize; prefer to keep edited images somewhat smaller
+            compressed = compress_image(file.stream, ext, max_size=(1200, 1200), quality=85)
+            if compressed:
+                with open(dst, 'wb') as out:
+                    out.write(compressed.read())
+            else:
+                file.stream.seek(0)
+                file.save(dst)
+            # set primary image filename on the recipe
+            r.image = newname
+            # create a thumbnail for listing pages
+            try:
+                make_thumbnail(dst)
+            except Exception:
+                current_app.logger.exception('Failed to create thumbnail for %s', dst)
+
         db.session.commit()
         flash('Recipe updated.', 'success')
         return redirect(url_for('main.recipe_detail', recipe_id=recipe_id))

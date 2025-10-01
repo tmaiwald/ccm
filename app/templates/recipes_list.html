@@ -16,7 +16,11 @@
       <div class="col">
         <div class="card h-100">
           {% if r.image %}
-            <img src="{{ url_for('static', filename='uploads/'~r.image) }}" class="card-img-top" style="height:180px;object-fit:cover;" alt="{{ r.title }}">
+            {% if r.thumb_url %}
+              <img src="{{ r.thumb_url }}" class="card-img-top" style="height:180px;object-fit:cover;" alt="{{ r.title }}">
+            {% else %}
+              <img src="{{ url_for('static', filename='uploads/'~r.image) }}" class="card-img-top" style="height:180px;object-fit:cover;" alt="{{ r.title }}">
+            {% endif %}
           {% endif %}
           <div class="card-body d-flex flex-column">
             <h5 class="card-title">{{ r.title }}</h5>
