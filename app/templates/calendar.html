@@ -254,8 +254,19 @@
   /* on dark backgrounds (if any), ensure hint remains subtle */
   .day-card .propose-hint { color: rgba(0,0,0,0.45); }
 
+  /* make the proposal container positioned so stretched-link can be layered under controls */
+  .proposal { background: #f8f9fa; position: relative; }
+
+  /* keep the stretched-link visually covering the card but under interactive controls */
+  .proposal .stretched-link { z-index: 1; }
+
+  /* ensure buttons and forms inside proposals are above the stretched-link and receive pointer events */
+  .proposal form, .proposal .btn {
+    position: relative;
+    z-index: 3;
+  }
+
   /* preserve other styles */
-  .proposal { background: #f8f9fa; }
   .commit-card { display:flex; flex-direction:column; min-height:140px; }
   .commit-card .card-body { flex:1; }
   .commit-card .card-header { background: transparent; border-bottom:1px solid #e9ecef; }
