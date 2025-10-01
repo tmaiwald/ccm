@@ -723,7 +723,9 @@ def admin_toggle_global_notifications():
         cfg = MailConfig()
         db.session.add(cfg)
     # checkbox uses hidden default '0' and checkbox '1'
-    enabled = bool(request.form.get('global_notifications'))
+    # enabled = bool(request.form.get('global_notifications'))
+    # request.form.get(...) returns strings like '0' or '1'. Use explicit check.
+    enabled = (request.form.get('global_notifications') == '1')
     cfg.mail_notifications_enabled = enabled
     db.session.commit()
     flash('Global mail notification setting updated', 'success')
