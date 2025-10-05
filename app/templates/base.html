@@ -83,13 +83,18 @@
     <div class="container my-4">
 
       {% if current_user.is_authenticated and current_user.is_admin %}
-        <form method="post" action="{{ url_for('main.admin_toggle_global_notifications') }}">
-          <input type="hidden" name="global_notifications" value="0">
+        <form method="post" action="{{ url_for('main.admin_toggle_global_notifications') }}" id="globalNotificationsForm">
+          <input type="hidden" name="global_notifications" id="globalNotificationsInput" value="{{ 1 if g.mail_cfg and g.mail_cfg.mail_notifications_enabled else 0 }}">
           <div class="d-flex justify-content-end mb-3">
-            <div class="form-check form-switch">
-              <input class="form-check-input" type="checkbox" role="switch" id="globalNotificationsSwitch" name="global_notifications" value="1" {% if g.mail_cfg and g.mail_cfg.mail_notifications_enabled %}checked{% endif %} onchange="this.form.submit()">
-              <label class="form-check-label" for="globalNotificationsSwitch">Global email notifications</label>
-            </div>
+            <button type="button" id="globalNotificationsBtn" class="btn btn-sm shadow-sm {% if g.mail_cfg and g.mail_cfg.mail_notifications_enabled %}btn-success{% else %}btn-danger{% endif %}" aria-pressed="{{ 'true' if g.mail_cfg and g.mail_cfg.mail_notifications_enabled else 'false' }}" title="Toggle global email notifications">
+              {% if g.mail_cfg and g.mail_cfg.mail_notifications_enabled %}
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-bell-fill me-1" viewBox="0 0 16 16"><path d="M8 16a2 2 0 0 0 1.985-1.75H6.015A2 2 0 0 0 8 16zM8 1a4 4 0 0 0-4 4v2.086l-.854 1.712A1 1 0 0 0 4 11h8a1 1 0 0 0 .854-1.202L12 7.086V5a4 4 0 0 0-4-4z"/></svg>
+                Notifications ON
+              {% else %}
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-bell-slash-fill me-1" viewBox="0 0 16 16"><path d="M10.278 8.5L5 3.222V5a3 3 0 0 0 3 3h2.278zM2.354 1.646a.5.5 0 1 0-.708.708l12 12a.5.5 0 0 0 .708-.708l-12-12zM13.5 8.5V5a4.5 4.5 0 0 0-8.874-1.5L3 3.5v5l.5 1A1.5 1.5 0 0 0 5 11h6a1.5 1.5 0 0 0 1.5-1.5z"/></svg>
+                Notifications OFF
+              {% endif %}
+            </button>
           </div>
         </form>
       {% endif %}
@@ -117,6 +122,20 @@
     document.addEventListener('DOMContentLoaded', function(){
       var tipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
       tipTriggerList.forEach(function (el) { new bootstrap.Tooltip(el); });
+
+      // Global notifications toggle button handler (admin)
+      var btn = document.getElementById('globalNotificationsBtn');
+      if (btn) {
+        btn.addEventListener('click', function () {
+          var form = document.getElementById('globalNotificationsForm');
+          var input = document.getElementById('globalNotificationsInput');
+          // flip value: '1' -> '0', '0' -> '1'
+          input.value = (input.value === '1') ? '0' : '1';
+          // visually disable to avoid double clicks while submitting
+          btn.disabled = true;
+          form.submit();
+        });
+      }
     });
    </script>
 

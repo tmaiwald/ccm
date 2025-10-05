@@ -450,7 +450,7 @@ def profile(user_id):
     u = User.query.get_or_404(user_id)
     # simple stats
     recipes = Recipe.query.filter_by(user_id=u.id).all()
-    times_cooked = sum(r.times_cooked for r in recipes)
+    times_cooked = sum((r.times_cooked or 0) for r in recipes)
     return render_template('profile.html', user=u, recipes=recipes, times_cooked=times_cooked)
 
 
@@ -1031,7 +1031,7 @@ def users_overview():
     for u in users:
         recs = Recipe.query.filter_by(user_id=u.id).all()
         recipes_count = len(recs)
-        times_cooked = sum(r.times_cooked for r in recs)
+        times_cooked = sum((r.times_cooked or 0) for r in recs)
         data.append({'user': u, 'recipes_count': recipes_count, 'times_cooked': times_cooked})
     return render_template('users_overview.html', users=data)
 
