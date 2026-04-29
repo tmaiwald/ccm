@@ -1,6 +1,6 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g
+from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory
 from . import db
-from .models import Recipe, Proposal, Participant, User, Message, MailConfig
+from .models import Recipe, Proposal, Participant, User, Message, MailConfig, WebPushSubscription
 from flask_login import current_user, login_required
 from datetime import date, timedelta, time
 from calendar import monthrange
@@ -12,6 +12,12 @@ from email.message import EmailMessage
 from email.utils import formataddr
 from sqlalchemy import or_
 
+import base64
+import json
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives import serialization
+from pywebpush import webpush, WebPushException
+
 from PIL import Image
 import io
 import uuid
@@ -21,6 +27,25 @@ main = Blueprint("main", __name__)
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'static', 'uploads')
 ALLOWED_EXT = {'png', 'jpg', 'jpeg', 'gif'}
+
+
+# Serve PWA assets from the origin root so the service worker can control '/'
+@main.route('/sw.js')
+def service_worker():
+    resp = send_from_directory(os.path.join(os.path.dirname(__file__), 'static'), 'sw.js')
+    # Avoid long-lived caching while iterating
+    resp.headers['Cache-Control'] = 'no-cache'
+    # Ensure correct type in case the server guesses incorrectly
+    resp.headers['Content-Type'] = 'application/javascript; charset=utf-8'
+    return resp
+
+
+@main.route('/manifest.json')
+def web_manifest():
+    resp = send_from_directory(os.path.join(os.path.dirname(__file__), 'static'), 'manifest.json')
+    resp.headers['Cache-Control'] = 'no-cache'
+    resp.headers['Content-Type'] = 'application/manifest+json; charset=utf-8'
+    return resp
 
 
 def allowed_file(filename):
@@ -92,6 +117,51 @@ def load_mail_config():
         g.mail_ok = True
 
 
+@main.route('/push/public_key')
+@login_required
+def push_public_key():
+    public_key, _, _ = ensure_vapid_keys()
+    return {'publicKey': public_key}
+
+
+@main.route('/push/subscribe', methods=['POST'])
+@login_required
+def push_subscribe():
+    data = request.get_json(silent=True) or {}
+    sub = data.get('subscription') or data
+    endpoint = sub.get('endpoint') if isinstance(sub, dict) else None
+    keys = sub.get('keys') if isinstance(sub, dict) else None
+    p256dh = keys.get('p256dh') if keys else None
+    auth = keys.get('auth') if keys else None
+    if not endpoint or not p256dh or not auth:
+        return {'ok': False, 'error': 'invalid subscription'}, 400
+
+    existing = WebPushSubscription.query.filter_by(endpoint=endpoint).first()
+    if not existing:
+        existing = WebPushSubscription(endpoint=endpoint, user_id=current_user.id, p256dh=p256dh, auth=auth)
+        db.session.add(existing)
+    else:
+        existing.user_id = current_user.id
+        existing.p256dh = p256dh
+        existing.auth = auth
+    db.session.commit()
+    return {'ok': True}
+
+
+@main.route('/push/unsubscribe', methods=['POST'])
+@login_required
+def push_unsubscribe():
+    data = request.get_json(silent=True) or {}
+    endpoint = data.get('endpoint')
+    if not endpoint:
+        return {'ok': False, 'error': 'missing endpoint'}, 400
+    sub = WebPushSubscription.query.filter_by(endpoint=endpoint, user_id=current_user.id).first()
+    if sub:
+        db.session.delete(sub)
+        db.session.commit()
+    return {'ok': True}
+
+
 def send_mail(subject, text_body, recipients, html_body=None):
     # send mail using MailConfig if configured, otherwise return False
     cfg = MailConfig.query.first()
@@ -131,6 +201,111 @@ def send_mail(subject, text_body, recipients, html_body=None):
     except Exception as e:
         current_app.logger.exception('Mail send failed: %s', e)
         return False
+
+
+# Web push helpers
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b'=').decode('utf-8')
+
+
+def ensure_vapid_keys():
+    cfg = MailConfig.query.first()
+    if not cfg:
+        cfg = MailConfig()
+        db.session.add(cfg)
+
+    # pywebpush/py-vapid expects the VAPID private key as a base64url-encoded DER (PKCS8).
+    # Earlier versions of CCM stored PEM text; detect and migrate in-place.
+    needs_commit = False
+    if cfg.vapid_private_key and 'BEGIN' in (cfg.vapid_private_key or ''):
+        try:
+            loaded = serialization.load_pem_private_key(
+                cfg.vapid_private_key.encode('utf-8'),
+                password=None
+            )
+            der = loaded.private_bytes(
+                encoding=serialization.Encoding.DER,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption()
+            )
+            cfg.vapid_private_key = _b64url(der)
+            needs_commit = True
+        except Exception:
+            # If conversion fails, fall back to generating a new keypair below.
+            cfg.vapid_private_key = None
+
+    if cfg.vapid_private_key:
+        # Validate format quickly; if invalid, regenerate.
+        try:
+            padded = cfg.vapid_private_key + '=' * ((4 - (len(cfg.vapid_private_key) % 4)) % 4)
+            key_bytes = base64.urlsafe_b64decode(padded.encode('utf-8'))
+            serialization.load_der_private_key(key_bytes, password=None)
+        except Exception:
+            cfg.vapid_private_key = None
+
+    if not cfg.vapid_private_key or not cfg.vapid_public_key:
+        private_key = ec.generate_private_key(ec.SECP256R1())
+        private_der = private_key.private_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        )
+        public_key = private_key.public_key()
+        raw_public = public_key.public_bytes(
+            encoding=serialization.Encoding.X962,
+            format=serialization.PublicFormat.UncompressedPoint
+        )
+        cfg.vapid_private_key = _b64url(private_der)
+        cfg.vapid_public_key = _b64url(raw_public)
+        needs_commit = True
+
+    if not cfg.vapid_email:
+        sender = cfg.from_address or 'admin@example.com'
+        cfg.vapid_email = sender if sender.startswith('mailto:') else f'mailto:{sender}'
+        needs_commit = True
+
+    if needs_commit:
+        db.session.commit()
+
+    return cfg.vapid_public_key, cfg.vapid_private_key, (cfg.vapid_email or 'mailto:admin@example.com')
+
+
+def send_web_push_to_user(user, title: str, body: str, url: str = '/'):
+    """Send a web push notification to all subscriptions of a user. Returns True if any succeeded."""
+    if not user or not getattr(user, 'push_subscriptions', None):
+        return False
+    public_key, private_key, vapid_email = ensure_vapid_keys()
+    payload = json.dumps({"title": title, "body": body, "url": url})
+    ok = False
+    stale = []
+    for sub in list(user.push_subscriptions):
+        sub_info = {
+            'endpoint': sub.endpoint,
+            'keys': {
+                'p256dh': sub.p256dh,
+                'auth': sub.auth
+            }
+        }
+        try:
+            webpush(
+                subscription_info=sub_info,
+                data=payload,
+                vapid_private_key=private_key,
+                vapid_claims={'sub': vapid_email}
+            )
+            ok = True
+        except WebPushException as e:
+            status = getattr(getattr(e, 'response', None), 'status_code', None)
+            if status in (404, 410):
+                stale.append(sub)
+            current_app.logger.exception('Web push failed: %s', e)
+        except Exception as e:
+            current_app.logger.exception('Web push failed: %s', e)
+    if stale:
+        for s in stale:
+            db.session.delete(s)
+        db.session.commit()
+    return ok
 
 
 # helper to create nicer subjects and bodies for proposal-related mails
@@ -758,6 +933,68 @@ def admin_send_test_mail():
         flash(f'Test mail sent to {recipient}', 'success')
     else:
         flash('Failed to send test mail — check mail settings and logs', 'danger')
+    return redirect(url_for('main.admin_dashboard'))
+
+
+@main.route('/admin/test_notification', methods=['POST'])
+@login_required
+@admin_required
+def admin_test_notification():
+    """Send a simple test notification email to users opted into broadcasts."""
+    recipients = [u.email for u in User.query.filter(User.email != None, User.email != '', User.notify_broadcast == True).all()]
+    if not recipients:
+        flash('No recipients with email + broadcast notifications enabled', 'warning')
+        return redirect(url_for('main.admin_dashboard'))
+
+    subject = 'CCM test notification'
+    body = f'This is a test notification triggered by admin {current_user.username}.'
+    mail_ok = send_mail(subject, body, recipients)
+
+    # also send web push to broadcast-enabled users
+    push_ok = False
+    users = User.query.filter(User.notify_broadcast == True).all()
+    for u in users:
+        push_ok = send_web_push_to_user(u, subject, body, url=url_for('main.calendar_view')) or push_ok
+
+    if mail_ok or push_ok:
+        flash(f'Test notification sent (push/email) to broadcast-enabled users', 'success')
+    else:
+        flash('Failed to send test notification — check push/email settings and logs', 'danger')
+    return redirect(url_for('main.admin_dashboard'))
+
+
+@main.route('/admin/test_notification_user', methods=['POST'])
+@login_required
+@admin_required
+def admin_test_notification_user():
+    """Send a test notification (push + email fallback) to a specific user by username or email."""
+    identifier = (request.form.get('user_identifier') or '').strip()
+    if not identifier:
+        flash('Provide a username or email to notify', 'warning')
+        return redirect(url_for('main.admin_dashboard'))
+
+    user = User.query.filter((User.username == identifier) | (User.email == identifier)).first()
+    if not user:
+        flash('User not found for that identifier', 'warning')
+        return redirect(url_for('main.admin_dashboard'))
+    if not getattr(user, 'notify_broadcast', False):
+        flash('User disabled broadcast notifications', 'warning')
+        return redirect(url_for('main.admin_dashboard'))
+
+    push_title = 'CCM test notification'
+    push_body = f'This is a test notification triggered by admin {current_user.username}.'
+    push_ok = send_web_push_to_user(user, push_title, push_body, url=url_for('main.calendar_view'))
+
+    mail_ok = False
+    if user.email:
+        subject = push_title
+        body = f'{push_body}\n\nThis also includes an email copy for redundancy.'
+        mail_ok = send_mail(subject, body, [user.email])
+
+    if push_ok or mail_ok:
+        flash(f'Test notification sent to {user.username} (push{" and email" if mail_ok else ""})', 'success')
+    else:
+        flash('Failed to send test notification — check push/email settings and logs', 'danger')
     return redirect(url_for('main.admin_dashboard'))
 
 

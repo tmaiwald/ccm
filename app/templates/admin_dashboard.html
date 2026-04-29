@@ -105,4 +105,35 @@
       </form>
     </div>
   </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <h5 class="card-title">Test notification</h5>
+      <p class="small text-muted">Trigger a simple test notification (push + email fallback) to all users who enabled broadcast notifications.</p>
+      <form method="post" action="{{ url_for('main.admin_test_notification') }}">
+        <button class="btn btn-outline-primary">Send test notification</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
+      <h5 class="card-title">Test notification to user</h5>
+      <p class="small text-muted">Send a test notification (push + email fallback) to a specific user (by username or email) who has broadcast notifications enabled.</p>
+      <form method="post" action="{{ url_for('main.admin_test_notification_user') }}" class="row g-2 align-items-center">
+        <div class="col-auto flex-grow-1">
+          <input name="user_identifier" class="form-control" list="userList" placeholder="username or email" required>
+          <datalist id="userList">
+            {% for u in users %}
+              <option value="{{ u.username }}">{{ u.username }}{% if u.email %} ({{ u.email }}){% endif %}</option>
+              {% if u.email %}<option value="{{ u.email }}">{{ u.email }}</option>{% endif %}
+            {% endfor %}
+          </datalist>
+        </div>
+        <div class="col-auto">
+          <button class="btn btn-outline-secondary">Send to user</button>
+        </div>
+      </form>
+    </div>
+  </div>
 {% endblock %}

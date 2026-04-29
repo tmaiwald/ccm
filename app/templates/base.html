@@ -19,14 +19,17 @@
         z-index: 1030;
       }
     </style>
-    <meta name="theme-color" content="#435966">
-    <meta name="msapplication-TileColor" content="#435966">
+    <meta name="application-name" content="Cleverly Connected Meals">
+    <meta name="theme-color" content="#0f2430">
+    <meta name="msapplication-TileColor" content="#0f2430">
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-
+    <link rel="apple-touch-icon" sizes="180x180" href="{{ url_for('static', filename='img/ccm-icon-180.png') }}">
+    <link rel="icon" type="image/png" sizes="64x64" href="{{ url_for('static', filename='img/ccm-icon-64.png') }}">
+    <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='img/ccm-icon-192.png') }}">
     <!-- PWA manifest -->
-    <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+    <link rel="manifest" href="{{ url_for('main.web_manifest') }}">
   </head>
   <body>
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
@@ -139,14 +142,96 @@
     });
    </script>
 
-   <!-- Register minimal service worker to enable PWA install and use theme_color for system UI on Android -->
+   <!-- Register service worker from origin root (scope '/') -->
    <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', function() {
-        // Use double quotes around the Jinja expression to avoid nested single-quote conflicts
-        navigator.serviceWorker.register("{{ url_for('static', filename='sw.js') }}")
+        navigator.serviceWorker.register("{{ url_for('main.service_worker') }}")
           .then(function(reg) { console.log('Service worker registered:', reg.scope); })
           .catch(function(err) { console.log('Service worker registration failed:', err); });
+      });
+    }
+   </script>
+
+   <script>
+    // Convert VAPID public key to Uint8Array for subscribe()
+    function urlBase64ToUint8Array(base64String) {
+      const padding = '='.repeat((4 - base64String.length % 4) % 4);
+      const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+      const raw = window.atob(base64);
+      const output = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; ++i) {
+        output[i] = raw.charCodeAt(i);
+      }
+      return output;
+    }
+
+    async function ensurePushSubscription() {
+      if (!('serviceWorker' in navigator) || !('Notification' in window)) return;
+      if (Notification.permission === 'denied') return;
+
+      const reg = await navigator.serviceWorker.ready;
+      const existing = await reg.pushManager.getSubscription();
+
+      const resp = await fetch("{{ url_for('main.push_public_key') }}");
+      const data = await resp.json();
+      if (!data.publicKey) return;
+      const applicationServerKey = urlBase64ToUint8Array(data.publicKey);
+
+      const subscription = existing || await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: applicationServerKey
+      });
+
+      await fetch("{{ url_for('main.push_subscribe') }}", {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subscription: subscription })
+      });
+    }
+
+    async function requestPermissionAndSubscribe() {
+      if (!('Notification' in window)) return;
+      let permission = Notification.permission;
+      if (permission === 'default') {
+        permission = await Notification.requestPermission();
+      }
+      if (permission === 'granted') {
+        try {
+          await ensurePushSubscription();
+        } catch (e) {
+          console.warn('Push subscription failed', e);
+        }
+      }
+    }
+
+    if ('serviceWorker' in navigator && 'Notification' in window) {
+      window.addEventListener('load', function() {
+        // Push/Notifications generally require a secure context (HTTPS), and
+        // many browsers suppress permission prompts that aren't user-initiated.
+        if (typeof isSecureContext !== 'undefined' && !isSecureContext) {
+          console.warn('Push requires HTTPS (or localhost)');
+          return;
+        }
+
+        // If already granted, just ensure a subscription exists.
+        if (Notification.permission === 'granted') {
+          ensurePushSubscription().catch(function(e){ console.warn('Push subscription failed', e); });
+          return;
+        }
+
+        // If not decided yet, request permission on first user interaction.
+        if (Notification.permission === 'default') {
+          const handler = function() {
+            requestPermissionAndSubscribe();
+            window.removeEventListener('click', handler);
+            window.removeEventListener('keydown', handler);
+            window.removeEventListener('touchstart', handler);
+          };
+          window.addEventListener('click', handler, { once: true });
+          window.addEventListener('keydown', handler, { once: true });
+          window.addEventListener('touchstart', handler, { once: true });
+        }
       });
     }
    </script>

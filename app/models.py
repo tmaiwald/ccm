@@ -93,4 +93,19 @@ class MailConfig(db.Model):
     site_host = db.Column(db.String(255), nullable=True)  # public host/URL for links (e.g. https://ccm-m.aiwald.de)
     # Global on/off switch for all outgoing mail (admin-controlled). Default: off
     mail_notifications_enabled = db.Column(db.Boolean, default=False)
+    # VAPID keys for web push
+    vapid_public_key = db.Column(db.String(255), nullable=True)
+    vapid_private_key = db.Column(db.Text, nullable=True)
+    vapid_email = db.Column(db.String(255), nullable=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class WebPushSubscription(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    endpoint = db.Column(db.Text, nullable=False, unique=True)
+    p256dh = db.Column(db.String(255), nullable=False)
+    auth = db.Column(db.String(255), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship('User', backref=db.backref('push_subscriptions', lazy=True, cascade='all, delete-orphan'))

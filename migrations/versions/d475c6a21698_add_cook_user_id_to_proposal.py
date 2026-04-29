@@ -1,9 +1,15 @@
+"""add cook_user_id and constraints
 
-"""Revision ID: d475c6a21698
+Revision ID: d475c6a21698
 Revises: 0001_initial
 Create Date: 2025-08-31 21:14:04.313008
-
 """
+
+# revision identifiers, used by Alembic.
+revision = 'd475c6a21698'
+down_revision = '0001_initial'
+branch_labels = None
+depends_on = None
 
 from alembic import op
 import sqlalchemy as sa
