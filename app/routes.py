@@ -540,11 +540,15 @@ def propose_recipe(recipe_id, date_str):
     db.session.add(p)
     db.session.commit()
     flash('Proposal created', 'success')
-    # notify users who opted into new-proposal emails (exclude proposer)
-    recipients = [u.email for u in User.query.filter(User.id != current_user.id, User.email != None, User.email != '', User.notify_new_proposal == True).all()]
+    # notify users who opted into new-proposal emails/push (exclude proposer)
+    notify_users = User.query.filter(User.id != current_user.id, User.notify_new_proposal == True).all()
+    recipients = [u.email for u in notify_users if u.email]
+    subj, text_body, html_body = make_proposal_mail(p, 'created a proposal', current_user.username)
     if recipients:
-        subj, text_body, html_body = make_proposal_mail(p, 'created a proposal', current_user.username)
         send_mail(subj, text_body, recipients, html_body)
+    discuss_url = url_for('main.proposal_discuss', proposal_id=p.id)
+    for u in notify_users:
+        send_web_push_to_user(u, subj, f'{current_user.username} created a new meal proposal', url=discuss_url)
     return redirect(url_for('main.calendar_view', year=d.year, month=d.month))
 
 
@@ -565,11 +569,15 @@ def create_proposal(recipe_id, date_str):
     db.session.add(p)
     db.session.commit()
     flash('Proposal created', 'success')
-    # notify users who opted into new-proposal emails (exclude proposer)
-    recipients = [u.email for u in User.query.filter(User.id != current_user.id, User.email != None, User.email != '', User.notify_new_proposal == True).all()]
+    # notify users who opted into new-proposal emails/push (exclude proposer)
+    notify_users = User.query.filter(User.id != current_user.id, User.notify_new_proposal == True).all()
+    recipients = [u.email for u in notify_users if u.email]
+    subj, text_body, html_body = make_proposal_mail(p, 'created a proposal', current_user.username)
     if recipients:
-        subj, text_body, html_body = make_proposal_mail(p, 'created a proposal', current_user.username)
         send_mail(subj, text_body, recipients, html_body)
+    discuss_url = url_for('main.proposal_discuss', proposal_id=p.id)
+    for u in notify_users:
+        send_web_push_to_user(u, subj, f'{current_user.username} created a new meal proposal', url=discuss_url)
     return redirect(url_for('main.calendar_view'))
 
 
@@ -585,10 +593,14 @@ def join_proposal(proposal_id):
         db.session.commit()
         flash('Joined', 'success')
         # notify other participants who opted into discussion notifications
-        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
+        notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
+        recipients = [u.email for u in notify_parts if u.email]
+        subj, text_body, html_body = make_proposal_mail(p, 'joined the meal', current_user.username)
         if recipients:
-            subj, text_body, html_body = make_proposal_mail(p, 'joined the meal', current_user.username)
             send_mail(subj, text_body, recipients, html_body)
+        discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
+        for u in notify_parts:
+            send_web_push_to_user(u, subj, f'{current_user.username} joined the meal', url=discuss_url)
     # decide where to redirect based on optional 'next' parameter
     next_param = (request.form.get('next') or request.args.get('next') or '').lower()
     if next_param == 'discuss':
@@ -604,13 +616,17 @@ def unjoin_proposal(proposal_id):
     part = Participant.query.filter_by(proposal_id=p.id, user_id=current_user.id).first()
     if part:
         # prepare recipients before removal
-        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
+        notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
+        recipients = [u.email for u in notify_parts if u.email]
         db.session.delete(part)
         db.session.commit()
         flash('Left', 'success')
+        subj, text_body, html_body = make_proposal_mail(p, 'left the meal', current_user.username)
         if recipients:
-            subj, text_body, html_body = make_proposal_mail(p, 'left the meal', current_user.username)
             send_mail(subj, text_body, recipients, html_body)
+        discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
+        for u in notify_parts:
+            send_web_push_to_user(u, subj, f'{current_user.username} left the meal', url=discuss_url)
     # redirect to either the discussion page or the calendar week depending on 'next'
     next_param = (request.form.get('next') or request.args.get('next') or '').lower()
     if next_param == 'discuss':
@@ -675,11 +691,15 @@ def propose_recipe_form():
     db.session.add(p)
     db.session.commit()
     flash('Proposal created', 'success')
-    # notify users who opted into new-proposal emails (exclude proposer)
-    recipients = [u.email for u in User.query.filter(User.id != current_user.id, User.email != None, User.email != '', User.notify_new_proposal == True).all()]
+    # notify users who opted into new-proposal emails/push (exclude proposer)
+    notify_users = User.query.filter(User.id != current_user.id, User.notify_new_proposal == True).all()
+    recipients = [u.email for u in notify_users if u.email]
+    subj, text_body, html_body = make_proposal_mail(p, 'created a proposal', current_user.username)
     if recipients:
-        subj, text_body, html_body = make_proposal_mail(p, 'created a proposal', current_user.username)
         send_mail(subj, text_body, recipients, html_body)
+    discuss_url = url_for('main.proposal_discuss', proposal_id=p.id)
+    for u in notify_users:
+        send_web_push_to_user(u, subj, f'{current_user.username} created a new meal proposal', url=discuss_url)
 
     # auto-join logic
     if request.form.get('auto_join'):
@@ -811,13 +831,17 @@ def delete_proposal(proposal_id):
     # prepare info before deletion
     title = p.recipe.title
     pdate = p.date
-    recipients = [pa.user.email for pa in p.participants if pa.user.email]
+    notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id]
+    recipients = [u.email for u in notify_parts if u.email]
     db.session.delete(p)
     db.session.commit()
     flash('Proposal removed', 'success')
+    subj, text_body, html_body = make_proposal_mail(p, 'removed the proposal', current_user.username, extra_text=f'The proposal was removed by {current_user.username}.')
     if recipients:
-        subj, text_body, html_body = make_proposal_mail(p, 'removed the proposal', current_user.username, extra_text=f'The proposal was removed by {current_user.username}.')
         send_mail(subj, text_body, recipients, html_body)
+    discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
+    for u in notify_parts:
+        send_web_push_to_user(u, subj, f'{current_user.username} removed the proposal', url=discuss_url)
     return redirect(url_for('main.calendar_view', year=pdate.year, month=pdate.month))
 
 
@@ -834,18 +858,26 @@ def claim_grocery(proposal_id):
         p.grocery_user_id = None
         db.session.commit()
         flash('You unclaimed grocery duty', 'success')
-        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
+        notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
+        recipients = [u.email for u in notify_parts if u.email]
+        subj, text_body, html_body = make_proposal_mail(p, 'unclaimed grocery duty', current_user.username)
         if recipients:
-            subj, text_body, html_body = make_proposal_mail(p, 'unclaimed grocery duty', current_user.username)
             send_mail(subj, text_body, recipients, html_body)
+        discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
+        for u in notify_parts:
+            send_web_push_to_user(u, subj, f'{current_user.username} unclaimed grocery duty', url=discuss_url)
     else:
         p.grocery_user_id = current_user.id
         db.session.commit()
         flash('You will do the groceries', 'success')
-        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
+        notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
+        recipients = [u.email for u in notify_parts if u.email]
+        subj, text_body, html_body = make_proposal_mail(p, 'claimed grocery duty', current_user.username)
         if recipients:
-            subj, text_body, html_body = make_proposal_mail(p, 'claimed grocery duty', current_user.username)
             send_mail(subj, text_body, recipients, html_body)
+        discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
+        for u in notify_parts:
+            send_web_push_to_user(u, subj, f'{current_user.username} claimed grocery duty', url=discuss_url)
     return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
 
 
@@ -863,19 +895,27 @@ def claim_cook(proposal_id):
         db.session.commit()
         flash('You unclaimed cooking duty', 'success')
         # notify participants
-        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
+        notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
+        recipients = [u.email for u in notify_parts if u.email]
+        subj, text_body, html_body = make_proposal_mail(p, 'unclaimed cooking duty', current_user.username)
         if recipients:
-            subj, text_body, html_body = make_proposal_mail(p, 'unclaimed cooking duty', current_user.username)
             send_mail(subj, text_body, recipients, html_body)
+        discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
+        for u in notify_parts:
+            send_web_push_to_user(u, subj, f'{current_user.username} unclaimed cooking duty', url=discuss_url)
     else:
         p.cook_user_id = current_user.id
         db.session.commit()
         flash('You will cook the meal', 'success')
         # notify participants
-        recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
+        notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
+        recipients = [u.email for u in notify_parts if u.email]
+        subj, text_body, html_body = make_proposal_mail(p, 'claimed cooking duty', current_user.username)
         if recipients:
-            subj, text_body, html_body = make_proposal_mail(p, 'claimed cooking duty', current_user.username)
             send_mail(subj, text_body, recipients, html_body)
+        discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
+        for u in notify_parts:
+            send_web_push_to_user(u, subj, f'{current_user.username} claimed cooking duty', url=discuss_url)
     return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
 
 
@@ -890,10 +930,14 @@ def proposal_discuss(proposal_id):
             db.session.add(m)
             db.session.commit()
             # notify participants (exclude the sender)
-            recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
+            notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
+            recipients = [u.email for u in notify_parts if u.email]
+            subj, text_body, html_body = make_proposal_mail(p, 'left a message', current_user.username, extra_text=f'"{content}"')
             if recipients:
-                subj, text_body, html_body = make_proposal_mail(p, 'left a message', current_user.username, extra_text=f'"{content}"')
                 send_mail(subj, text_body, recipients, html_body)
+            discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
+            for u in notify_parts:
+                send_web_push_to_user(u, subj, f'{current_user.username} left a message', url=discuss_url)
             return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
     messages = Message.query.filter_by(proposal_id=p.id).order_by(Message.created_at.asc()).all()
     # pass explicit boolean whether current user has joined the proposal
@@ -1335,11 +1379,15 @@ def change_start_time(proposal_id):
     db.session.commit()
     flash('Start time updated', 'success')
     # notify other participants (exclude actor)
-    recipients = [pa.user.email for pa in p.participants if pa.user.email and pa.user_id != current_user.id]
+    notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id]
+    recipients = [u.email for u in notify_parts if u.email]
+    extra = f'New start time: {p.start_time.strftime("%H:%M") if p.start_time else "12:00"}'
+    subj, text_body, html_body = make_proposal_mail(p, 'changed the start time', current_user.username, extra_text=extra)
     if recipients:
-        extra = f'New start time: {p.start_time.strftime("%H:%M") if p.start_time else "12:00"}'
-        subj, text_body, html_body = make_proposal_mail(p, 'changed the start time', current_user.username, extra_text=extra)
         send_mail(subj, text_body, recipients, html_body)
+    discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
+    for u in notify_parts:
+        send_web_push_to_user(u, subj, f'{current_user.username} changed the start time', url=discuss_url)
     return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
 
 
