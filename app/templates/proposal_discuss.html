@@ -111,84 +111,6 @@
     {% endif %}
   </div>
 
-  {# ── Shopping list ── #}
-  <div class="card mb-3">
-    <div class="card-header d-flex justify-content-between align-items-center py-2">
-      <span class="fw-semibold">
-        <span class="material-icons" style="font-size:16px;vertical-align:middle;">shopping_cart</span>
-        Shopping list
-      </span>
-      <span class="badge bg-secondary">{{ shopping_items|length }} item{{ 's' if shopping_items|length != 1 }}</span>
-    </div>
-    <div class="card-body p-0">
-      {% if shopping_items %}
-        <ul class="list-group list-group-flush">
-          {% for item in shopping_items %}
-            <li class="list-group-item d-flex align-items-center gap-2 py-2 px-3">
-              {# claim/unclaim button #}
-              {% if current_user.is_authenticated and (joined or proposal.proposer_id == current_user.id or current_user.is_admin) %}
-                <form method="post" action="{{ url_for('main.shopping_claim', proposal_id=proposal.id, item_id=item.id) }}" class="me-1">
-                  {% if item.claimer_id == current_user.id %}
-                    <button class="btn btn-sm btn-success p-0 px-1" title="You claimed this — click to unclaim"
-                            style="line-height:1.4;font-size:12px;">✓ Me</button>
-                  {% elif item.claimer_id is none %}
-                    <button class="btn btn-sm btn-outline-secondary p-0 px-1" title="Claim this item"
-                            style="line-height:1.4;font-size:12px;">Claim</button>
-                  {% else %}
-                    <button class="btn btn-sm btn-secondary p-0 px-1" disabled
-                            style="line-height:1.4;font-size:12px;">{{ item.claimer.username }}</button>
-                  {% endif %}
-                </form>
-              {% else %}
-                {# not a participant — show static status #}
-                {% if item.claimer %}
-                  <span class="badge bg-success" style="font-size:11px;">{{ item.claimer.username }}</span>
-                {% else %}
-                  <span class="badge bg-light text-muted border" style="font-size:11px;">unclaimed</span>
-                {% endif %}
-              {% endif %}
-
-              <span class="flex-grow-1">
-                {{ item.name }}
-                {% if item.quantity %}
-                  <span class="text-muted small">— {{ item.quantity }}</span>
-                {% endif %}
-              </span>
-
-              <span class="text-muted" style="font-size:11px;">by {{ item.added_by.username }}</span>
-
-              {# delete button — only adder / proposer / admin #}
-              {% if current_user.is_authenticated and (item.added_by_id == current_user.id or proposal.proposer_id == current_user.id or current_user.is_admin) %}
-                <form method="post" action="{{ url_for('main.shopping_delete', proposal_id=proposal.id, item_id=item.id) }}" class="ms-1">
-                  <button class="btn btn-sm btn-link text-danger p-0" title="Remove item"
-                          style="line-height:1;font-size:14px;">✕</button>
-                </form>
-              {% endif %}
-            </li>
-          {% endfor %}
-        </ul>
-      {% else %}
-        <p class="text-muted small px-3 py-2 mb-0">No items yet — add something below.</p>
-      {% endif %}
-    </div>
-
-    {# add-item form (participants only) #}
-    {% if current_user.is_authenticated and (joined or proposal.proposer_id == current_user.id or current_user.is_admin) %}
-      <div class="card-footer py-2">
-        <form method="post" action="{{ url_for('main.shopping_add', proposal_id=proposal.id) }}"
-              class="d-flex gap-2 align-items-center flex-wrap">
-          <input type="text" name="name" class="form-control form-control-sm" style="min-width:140px;flex:2;"
-                 placeholder="Item name" required maxlength="200">
-          <input type="text" name="quantity" class="form-control form-control-sm" style="min-width:80px;max-width:120px;"
-                 placeholder="Qty (opt.)" maxlength="100">
-          <button class="btn btn-sm btn-outline-primary">
-            <span class="material-icons" style="font-size:15px;vertical-align:middle;">add</span> Add
-          </button>
-        </form>
-      </div>
-    {% endif %}
-  </div>
-
   <div class="mb-3">
     <h6>Participants</h6>
     <div class="d-flex gap-2 align-items-start flex-wrap" style="max-width:100%;overflow-x:hidden;">
@@ -246,6 +168,102 @@
         </form>
       </div>
     {% endif %}
+  </div>
+
+  {# ── Shopping list (collapsible) ── #}
+  {% set can_shop = current_user.is_authenticated and (joined or proposal.proposer_id == current_user.id or current_user.is_admin) %}
+  {% set unclaimed_count = shopping_items | selectattr('claimer_id', 'none') | list | length %}
+  <div class="card mb-3">
+    <div class="card-header d-flex align-items-center gap-2 py-2" role="button"
+         data-bs-toggle="collapse" data-bs-target="#shoppingCollapse" aria-expanded="false"
+         style="cursor:pointer;user-select:none;">
+      <span class="material-icons text-success" style="font-size:18px;">shopping_cart</span>
+      <span class="fw-semibold flex-grow-1">Shopping list</span>
+      {% if shopping_items %}
+        <span class="badge bg-secondary me-1">{{ shopping_items|length }}</span>
+        {% if unclaimed_count %}
+          <span class="badge bg-warning text-dark me-1">{{ unclaimed_count }} open</span>
+        {% else %}
+          <span class="badge bg-success me-1">All claimed</span>
+        {% endif %}
+      {% endif %}
+      <span class="material-icons text-muted" id="shopChevron" style="font-size:18px;transition:transform .2s;">expand_more</span>
+    </div>
+
+    <div class="collapse" id="shoppingCollapse">
+      {% if shopping_items %}
+        <ul class="list-group list-group-flush">
+          {% for item in shopping_items %}
+            <li class="list-group-item px-3 py-2">
+              <div class="d-flex align-items-center gap-2">
+
+                {# status pill / claim button #}
+                {% if can_shop %}
+                  <form method="post" action="{{ url_for('main.shopping_claim', proposal_id=proposal.id, item_id=item.id) }}" class="flex-shrink-0">
+                    {% if item.claimer_id == current_user.id %}
+                      <button class="btn btn-sm btn-success" style="min-width:72px;font-size:12px;" title="Click to unclaim">
+                        <span class="material-icons" style="font-size:13px;vertical-align:middle;">check</span> Me
+                      </button>
+                    {% elif item.claimer_id is none %}
+                      <button class="btn btn-sm btn-outline-secondary" style="min-width:72px;font-size:12px;" title="Claim this item">
+                        Claim
+                      </button>
+                    {% else %}
+                      <button class="btn btn-sm btn-secondary" style="min-width:72px;font-size:12px;" disabled>
+                        {{ item.claimer.username }}
+                      </button>
+                    {% endif %}
+                  </form>
+                {% else %}
+                  <span class="flex-shrink-0" style="min-width:72px;">
+                    {% if item.claimer %}
+                      <span class="badge bg-success">{{ item.claimer.username }}</span>
+                    {% else %}
+                      <span class="badge bg-light text-muted border">open</span>
+                    {% endif %}
+                  </span>
+                {% endif %}
+
+                {# item name + qty #}
+                <span class="flex-grow-1">
+                  <span class="{% if item.claimer_id %}text-decoration-line-through text-muted{% endif %}">{{ item.name }}</span>
+                  {% if item.quantity %}
+                    <span class="text-muted small ms-1">{{ item.quantity }}</span>
+                  {% endif %}
+                </span>
+
+                {# adder + delete #}
+                <span class="text-muted flex-shrink-0" style="font-size:11px;">{{ item.added_by.username }}</span>
+                {% if current_user.is_authenticated and (item.added_by_id == current_user.id or proposal.proposer_id == current_user.id or current_user.is_admin) %}
+                  <form method="post" action="{{ url_for('main.shopping_delete', proposal_id=proposal.id, item_id=item.id) }}" class="flex-shrink-0 ms-1">
+                    <button class="btn btn-link text-danger p-0" style="font-size:14px;line-height:1;" title="Remove">
+                      <span class="material-icons" style="font-size:16px;vertical-align:middle;">delete_outline</span>
+                    </button>
+                  </form>
+                {% endif %}
+              </div>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="px-3 py-3 text-muted small">No items yet{% if can_shop %} — add the first one below{% endif %}.</div>
+      {% endif %}
+
+      {% if can_shop %}
+        <div class="px-3 py-2 border-top bg-light">
+          <form method="post" action="{{ url_for('main.shopping_add', proposal_id=proposal.id) }}"
+                class="d-flex gap-2 align-items-center flex-wrap">
+            <input type="text" name="name" class="form-control form-control-sm" style="flex:2;min-width:130px;"
+                   placeholder="Item name" required maxlength="200" autocomplete="off">
+            <input type="text" name="quantity" class="form-control form-control-sm" style="max-width:100px;"
+                   placeholder="Qty" maxlength="100" autocomplete="off">
+            <button class="btn btn-sm btn-primary">
+              <span class="material-icons" style="font-size:15px;vertical-align:middle;">add</span> Add
+            </button>
+          </form>
+        </div>
+      {% endif %}
+    </div>
   </div>
 
   <p class="text-muted small mb-3">Here you can exchange details and coordinate for "{{ proposal.recipe.title }}" on {{ proposal.date.strftime('%Y-%m-%d') }}.</p>
@@ -413,6 +431,14 @@
 
   <script>
   document.addEventListener('DOMContentLoaded', function(){
+    // Shopping list chevron flip
+    var shoppingEl = document.getElementById('shoppingCollapse');
+    var shopChevron = document.getElementById('shopChevron');
+    if (shoppingEl && shopChevron) {
+      shoppingEl.addEventListener('show.bs.collapse', function(){ shopChevron.style.transform = 'rotate(180deg)'; });
+      shoppingEl.addEventListener('hide.bs.collapse', function(){ shopChevron.style.transform = 'rotate(0deg)'; });
+    }
+
     var btn = document.getElementById('toggleTimeEdit');
     var form = document.getElementById('timeEditForm');
     var cancel = document.getElementById('cancelTimeEdit');
