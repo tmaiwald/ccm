@@ -121,7 +121,8 @@
       Messages
     </h6>
 
-    <div class="mb-3" id="messagesContainer">
+    <div class="mb-3 border rounded" id="messagesContainer"
+         style="height:calc(100vh - 340px);min-height:280px;overflow-y:auto;padding:0.5rem;">
       {% if messages %}
         {% for m in messages %}
           {% set msg_reactions = reactions.get(m.id, {}) %}
@@ -250,8 +251,9 @@
 
   // ── Initial scroll ───────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', function () {
-    if (!window.location.hash) {
-      window.scrollTo(0, document.body.scrollHeight);
+    var c = document.getElementById('messagesContainer');
+    if (c && !window.location.hash) {
+      c.scrollTop = c.scrollHeight;
     }
   });
 
@@ -295,20 +297,19 @@
     if (id > lastId) lastId = id;
   });
 
-  // "↓ New messages" fixed banner
+  // "↓ New messages" banner — sits just above the compose form
   var banner = document.createElement('div');
   banner.innerHTML = '&#8595; New messages';
-  banner.className = 'btn btn-primary btn-sm shadow';
-  banner.style.cssText = 'display:none;position:fixed;bottom:70px;left:50%;transform:translateX(-50%);' +
-    'z-index:1050;border-radius:999px;padding:4px 16px;cursor:pointer;';
+  banner.className = 'btn btn-primary btn-sm shadow mb-1';
+  banner.style.cssText = 'display:none;width:100%;border-radius:999px;';
   banner.addEventListener('click', function () {
-    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
     banner.style.display = 'none';
   });
-  document.body.appendChild(banner);
+  container.parentNode.insertBefore(banner, container.nextSibling);
 
   function isNearBottom() {
-    return window.scrollY + window.innerHeight >= document.body.scrollHeight - 120;
+    return container.scrollHeight - container.scrollTop - container.clientHeight < 80;
   }
 
   // Re-run KaTeX on newly added elements
@@ -354,7 +355,7 @@
       });
 
       if (wasNearBottom) {
-        window.scrollTo(0, document.body.scrollHeight);
+        container.scrollTop = container.scrollHeight;
         banner.style.display = 'none';
       } else {
         banner.style.display = '';
