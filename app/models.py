@@ -121,6 +121,7 @@ class Group(db.Model):
     name = db.Column(db.String(100), nullable=False)
     banner_image = db.Column(db.String(255), nullable=True)
     group_image = db.Column(db.String(255), nullable=True)
+    description = db.Column(db.Text, nullable=True)
     creator_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 

@@ -1703,6 +1703,37 @@ def group_update_banner(group_id):
     return redirect(url_for('main.group_detail', group_id=group_id))
 
 
+@main.route('/groups/<int:group_id>/update_icon', methods=['POST'])
+@login_required
+def group_update_icon(group_id):
+    """Any group member can update the group avatar/icon."""
+    grp = Group.query.get_or_404(group_id)
+    if not GroupMembership.query.filter_by(user_id=current_user.id, group_id=group_id).first():
+        flash('Join the group first', 'warning')
+        return redirect(url_for('main.group_detail', group_id=group_id))
+    newicon = save_upload(request.files.get('group_image'), current_user.username, max_size=(400, 400))
+    if newicon:
+        grp.group_image = newicon
+        db.session.commit()
+        flash('Group icon updated', 'success')
+    else:
+        flash('No valid image provided (max 20 MB)', 'warning')
+    return redirect(url_for('main.group_detail', group_id=group_id))
+
+
+@main.route('/groups/<int:group_id>/update_description', methods=['POST'])
+@login_required
+def group_update_description(group_id):
+    """Any group member can edit the group description."""
+    grp = Group.query.get_or_404(group_id)
+    if not GroupMembership.query.filter_by(user_id=current_user.id, group_id=group_id).first():
+        flash('Join the group first', 'warning')
+        return redirect(url_for('main.group_detail', group_id=group_id))
+    grp.description = request.form.get('description', '').strip() or None
+    db.session.commit()
+    return redirect(url_for('main.group_detail', group_id=group_id))
+
+
 @main.route('/groups/<int:group_id>', methods=['GET', 'POST'])
 @login_required
 def group_detail(group_id):

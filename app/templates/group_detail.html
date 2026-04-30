@@ -1,21 +1,24 @@
 {% extends "base.html" %}
 
 {% block content %}
-{# Break out of Bootstrap container to full viewport width #}
+{# Break out of Bootstrap container + eat the my-4 top margin so banner touches navbar #}
 <style>
   .group-banner-wrap {
     width: 100vw;
     margin-left: calc(50% - 50vw);
     margin-right: calc(50% - 50vw);
+    margin-top: -1.5rem;   /* cancel .container.my-4 top spacing */
     position: relative;
-    overflow: hidden;
+    overflow: visible;     /* let icon overflow downward */
     height: 220px;
   }
-  .group-banner-wrap img.banner-img {
+  .group-banner-inner {
+    width: 100%; height: 100%; overflow: hidden; position: relative;
+  }
+  .group-banner-inner img.banner-img {
     width: 100%; height: 100%; object-fit: cover; display: block;
   }
-  /* dark gradient so text is readable */
-  .group-banner-wrap::after {
+  .group-banner-inner::after {
     content: '';
     position: absolute; inset: 0;
     background: linear-gradient(to bottom, transparent 30%, rgba(0,0,0,0.65) 100%);
@@ -24,18 +27,20 @@
   .group-banner-overlay {
     position: absolute; bottom: 0; left: 0; right: 0;
     z-index: 2;
-    padding: 0.75rem 1rem 0.75rem calc(max(1rem, calc(50% - 50vw + 1rem)));
+    padding: 0.75rem 1rem 0.9rem 1rem;
     display: flex; align-items: flex-end; gap: 0.85rem;
   }
+  /* icon sits half outside banner bottom */
   .group-icon-wrap {
     flex-shrink: 0;
-    width: 72px; height: 72px;
+    width: 76px; height: 76px;
     border-radius: 14px;
     overflow: hidden;
-    border: 3px solid rgba(255,255,255,0.85);
+    border: 3px solid rgba(255,255,255,0.9);
     background: #1a5070;
     box-shadow: 0 2px 8px rgba(0,0,0,0.35);
-    margin-bottom: -6px;
+    transform: translateY(30px);
+    position: relative;
   }
   .group-icon-wrap img { width:100%; height:100%; object-fit:cover; display:block; }
   .group-icon-placeholder {
@@ -43,28 +48,52 @@
     display:flex; align-items:center; justify-content:center;
     color: rgba(255,255,255,0.7); font-size: 2rem;
   }
+  /* tiny camera badge on icon */
+  .icon-camera-btn {
+    position: absolute; bottom: 2px; right: 2px;
+    background: rgba(0,0,0,0.55); border: none; border-radius: 50%;
+    width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+    cursor: pointer; padding: 0;
+  }
+  .icon-camera-btn .material-icons { font-size: 13px; color: #fff; }
 </style>
 
 {# ── Full-width Banner ── #}
 <div class="group-banner-wrap mb-0">
-  {% if group.banner_image %}
-    <img class="banner-img" src="{{ url_for('static', filename='uploads/'~group.banner_image) }}" alt="">
-  {% else %}
-    <div style="width:100%;height:100%;background:linear-gradient(135deg,#0f2430 0%,#1a5070 100%);"></div>
-  {% endif %}
+  <div class="group-banner-inner">
+    {% if group.banner_image %}
+      <img class="banner-img" src="{{ url_for('static', filename='uploads/'~group.banner_image) }}" alt="">
+    {% else %}
+      <div style="width:100%;height:100%;background:linear-gradient(135deg,#0f2430 0%,#1a5070 100%);"></div>
+    {% endif %}
 
-  {# Overlay: group icon + name + meta #}
+    {# Banner camera — creator/admin only #}
+    {% if current_user.id == group.creator_id or current_user.is_admin %}
+      <button type="button" data-bs-toggle="modal" data-bs-target="#bannerModal"
+              class="btn btn-sm btn-dark position-absolute top-0 end-0 m-2"
+              style="opacity:0.8;z-index:3;" title="Edit banner image">
+        <span class="material-icons" style="font-size:15px;vertical-align:middle;">photo_camera</span>
+      </button>
+    {% endif %}
+  </div>
+
+  {# Overlay: icon + name + meta #}
   <div class="group-banner-overlay">
     <div class="group-icon-wrap">
       {% if group.group_image %}
         <img src="{{ url_for('static', filename='uploads/'~group.group_image) }}" alt="{{ group.name }}">
       {% else %}
-        <div class="group-icon-placeholder">
-          <span class="material-icons">groups</span>
-        </div>
+        <div class="group-icon-placeholder"><span class="material-icons">groups</span></div>
+      {% endif %}
+      {# Any member can tap the icon to update it #}
+      {% if membership %}
+        <button type="button" class="icon-camera-btn" data-bs-toggle="modal" data-bs-target="#iconModal"
+                title="Change group icon">
+          <span class="material-icons">photo_camera</span>
+        </button>
       {% endif %}
     </div>
-    <div>
+    <div style="margin-bottom:2px;">
       <h3 class="mb-0 text-white fw-bold" style="text-shadow:0 1px 4px rgba(0,0,0,0.6);">{{ group.name }}</h3>
       <div class="small text-white-50">
         {{ group.memberships|length }} member{{ 's' if group.memberships|length != 1 }}
@@ -72,18 +101,13 @@
       </div>
     </div>
   </div>
-
-  {% if current_user.id == group.creator_id or current_user.is_admin %}
-    <button type="button" data-bs-toggle="modal" data-bs-target="#bannerModal"
-            class="btn btn-sm btn-dark position-absolute top-0 end-0 m-2"
-            style="opacity:0.8;z-index:3;" title="Change banner / group image">
-      <span class="material-icons" style="font-size:15px;vertical-align:middle;">photo_camera</span>
-    </button>
-  {% endif %}
 </div>
 
+{# Spacer to clear the overflowing icon #}
+<div style="height:38px;"></div>
+
 {# ── Action buttons row ── #}
-<div class="d-flex justify-content-end align-items-center mb-4 mt-2 flex-wrap gap-2">
+<div class="d-flex justify-content-end align-items-center mb-3 flex-wrap gap-2">
   {% if membership %}
     <form method="post" action="{{ url_for('main.group_leave', group_id=group.id) }}">
       <button class="btn btn-sm btn-outline-secondary">Leave group</button>
@@ -108,6 +132,34 @@
   <a href="{{ url_for('main.groups_list') }}" class="btn btn-sm btn-outline-secondary">← All groups</a>
 </div>
 
+{# ── Info / description section (editable by all members) ── #}
+<div class="card mb-3">
+  <div class="card-body py-2 px-3" id="descDisplay">
+    {% if group.description %}
+      <div class="md-content small">{{ group.description | markdown }}</div>
+    {% else %}
+      <span class="text-muted small fst-italic">No group description yet.</span>
+    {% endif %}
+    {% if membership %}
+      <button class="btn btn-link btn-sm p-0 ms-2 text-muted" onclick="toggleDescEdit(true)" title="Edit description">
+        <span class="material-icons" style="font-size:15px;vertical-align:middle;">edit</span>
+      </button>
+    {% endif %}
+  </div>
+  {% if membership %}
+  <div class="card-body py-2 px-3 d-none" id="descEdit">
+    <form method="post" action="{{ url_for('main.group_update_description', group_id=group.id) }}">
+      <textarea name="description" class="form-control form-control-sm mb-2" rows="3"
+                placeholder="Write a short description… (Markdown supported)">{{ group.description or '' }}</textarea>
+      <div class="d-flex gap-2">
+        <button class="btn btn-primary btn-sm">Save</button>
+        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="toggleDescEdit(false)">Cancel</button>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+</div>
+
 {# ── Two-column layout: members sidebar + messages main ── #}
 <div class="row g-3">
 
@@ -115,29 +167,36 @@
   <div class="col-12 col-md-3">
 
     <div class="card mb-3">
-      <div class="card-header fw-semibold">
-        <span class="material-icons" style="font-size:16px;vertical-align:middle;">group</span>
-        Members ({{ group.memberships|length }})
+      <div class="card-header fw-semibold d-flex align-items-center justify-content-between"
+           style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#membersCollapse"
+           aria-expanded="false" aria-controls="membersCollapse">
+        <span>
+          <span class="material-icons" style="font-size:16px;vertical-align:middle;">group</span>
+          Members ({{ group.memberships|length }})
+        </span>
+        <span class="material-icons text-muted" style="font-size:18px;" id="membersChevron">expand_more</span>
       </div>
-      <ul class="list-group list-group-flush">
-        {% for m in group.memberships %}
-          <li class="list-group-item d-flex align-items-center gap-2 py-2 px-3">
-            {% if m.user.avatar %}
-              <img src="{{ url_for('static', filename='uploads/'~m.user.avatar) }}"
-                   style="width:32px;height:32px;object-fit:cover;border-radius:5px;flex-shrink:0;">
-            {% else %}
-              <img src="{{ url_for('static', filename='img/default-avatar.svg') }}"
-                   style="width:32px;height:32px;object-fit:cover;border-radius:5px;flex-shrink:0;">
-            {% endif %}
-            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;">
-              <a href="{{ url_for('main.profile', user_id=m.user_id) }}" class="text-decoration-none text-body">{{ m.user.username }}</a>
-            </span>
-            {% if m.user_id == group.creator_id %}
-              <span class="badge bg-secondary ms-auto" style="font-size:0.62rem;flex-shrink:0;">creator</span>
-            {% endif %}
-          </li>
-        {% endfor %}
-      </ul>
+      <div class="collapse" id="membersCollapse">
+        <ul class="list-group list-group-flush">
+          {% for m in group.memberships %}
+            <li class="list-group-item d-flex align-items-center gap-2 py-2 px-3">
+              {% if m.user.avatar %}
+                <img src="{{ url_for('static', filename='uploads/'~m.user.avatar) }}"
+                     style="width:32px;height:32px;object-fit:cover;border-radius:5px;flex-shrink:0;">
+              {% else %}
+                <img src="{{ url_for('static', filename='img/default-avatar.svg') }}"
+                     style="width:32px;height:32px;object-fit:cover;border-radius:5px;flex-shrink:0;">
+              {% endif %}
+              <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;">
+                <a href="{{ url_for('main.profile', user_id=m.user_id) }}" class="text-decoration-none text-body">{{ m.user.username }}</a>
+              </span>
+              {% if m.user_id == group.creator_id %}
+                <span class="badge bg-secondary ms-auto" style="font-size:0.62rem;flex-shrink:0;">creator</span>
+              {% endif %}
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
     </div>
 
     {% if membership %}
@@ -247,21 +306,42 @@
   <div class="modal-dialog">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title" id="bannerModalLabel">Edit group images</h5>
+        <h5 class="modal-title" id="bannerModalLabel">Edit banner image</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <form method="post" action="{{ url_for('main.group_update_banner', group_id=group.id) }}" enctype="multipart/form-data">
         <div class="modal-body">
           <label class="form-label fw-semibold">Banner image</label>
           <input type="file" name="banner" class="form-control mb-1" accept="image/*,.gif">
-          <div class="form-text mb-3">Wide/landscape image recommended. PNG, JPG or GIF — max 20 MB.</div>
-          <label class="form-label fw-semibold">Group icon</label>
-          <input type="file" name="group_image" class="form-control mb-1" accept="image/*,.gif">
-          <div class="form-text">Square image works best (shown as a rounded icon over the banner).</div>
+          <div class="form-text">Wide/landscape image recommended. PNG, JPG or GIF — max 20 MB.</div>
         </div>
         <div class="modal-footer">
           <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
           <button type="submit" class="btn btn-primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ── Group icon modal (any member) ── #}
+{% if membership %}
+<div class="modal fade" id="iconModal" tabindex="-1" aria-labelledby="iconModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="iconModalLabel">Change group icon</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form method="post" action="{{ url_for('main.group_update_icon', group_id=group.id) }}" enctype="multipart/form-data">
+        <div class="modal-body">
+          <input type="file" name="group_image" class="form-control" accept="image/*,.gif" required>
+          <div class="form-text">Square image works best — max 20 MB.</div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Upload</button>
         </div>
       </form>
     </div>
@@ -304,6 +384,22 @@
   onload="document.querySelectorAll('.md-content').forEach(function(el){renderMathInElement(el,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false},{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}],ignoredTags:['script','noscript','style','textarea','pre','code'],throwOnError:false});});"></script>
 
 <script>
+// ── Description toggle ───────────────────────────────────────────
+function toggleDescEdit(show) {
+  document.getElementById('descDisplay').classList.toggle('d-none', show);
+  document.getElementById('descEdit').classList.toggle('d-none', !show);
+}
+
+// ── Members card chevron flip ────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function () {
+  var mc = document.getElementById('membersCollapse');
+  var ch = document.getElementById('membersChevron');
+  if (mc && ch) {
+    mc.addEventListener('show.bs.collapse', function () { ch.textContent = 'expand_less'; });
+    mc.addEventListener('hide.bs.collapse', function () { ch.textContent = 'expand_more'; });
+  }
+});
+
 (function () {
   'use strict';
 
