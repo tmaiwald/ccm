@@ -78,12 +78,25 @@ class Message(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     proposal_id = db.Column(db.Integer, db.ForeignKey('proposal.id'), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
-    content = db.Column(db.Text, nullable=False)
+    content = db.Column(db.Text, nullable=True)
+    attachment = db.Column(db.String(255), nullable=True)
+    attachment_url = db.Column(db.String(1024), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     # ensure messages are deleted when their proposal is deleted to avoid NOT NULL FK errors
     proposal = db.relationship('Proposal', backref=db.backref('messages', lazy=True, cascade='all, delete-orphan'))
     user = db.relationship('User', backref=db.backref('messages', lazy=True))
+    reactions = db.relationship('MessageReaction', backref='message', cascade='all, delete-orphan', lazy=True)
+
+
+class MessageReaction(db.Model):
+    __tablename__ = 'message_reaction'
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.Integer, db.ForeignKey('message.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    emoji = db.Column(db.String(10), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint('message_id', 'user_id', 'emoji'),)
 
 
 class MailConfig(db.Model):

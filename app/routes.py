@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory, jsonify
 from . import db
-from .models import Recipe, Proposal, Participant, User, Message, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction
+from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction
 from flask_login import current_user, login_required
 from datetime import date, timedelta, time
 from calendar import monthrange
@@ -988,26 +988,99 @@ def claim_cook(proposal_id):
 @login_required
 def proposal_discuss(proposal_id):
     p = Proposal.query.get_or_404(proposal_id)
+    is_participant = current_user.is_authenticated and any(pa.user_id == current_user.id for pa in p.participants)
+    can_post = is_participant or (current_user.is_authenticated and (p.proposer_id == current_user.id or current_user.is_admin))
+
     if request.method == 'POST':
         content = request.form.get('content', '').strip()
-        if content:
-            m = Message(proposal_id=p.id, user_id=current_user.id, content=content)
+        import re as _re
+        att_url = (request.form.get('attachment_url') or '').strip()
+        if att_url and not _re.match(r'^https?://', att_url):
+            att_url = ''
+        att = save_upload(request.files.get('attachment'), current_user.username, max_size=(1200, 1200))
+        if not can_post:
+            flash('You must be a participant to post', 'warning')
+            return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+        if content or att or att_url:
+            m = Message(proposal_id=p.id, user_id=current_user.id, content=content or None,
+                        attachment=att, attachment_url=att_url or None)
             db.session.add(m)
             db.session.commit()
             # notify participants (exclude the sender)
             notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
             recipients = [u.email for u in notify_parts if u.email]
-            subj, text_body, html_body = make_proposal_mail(p, 'left a message', current_user.username, extra_text=f'"{content}"')
+            subj, text_body, html_body = make_proposal_mail(p, 'left a message', current_user.username, extra_text=f'"{content}"' if content else '')
             if recipients:
                 send_mail(subj, text_body, recipients, html_body)
             discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
             for u in notify_parts:
                 send_web_push_to_user(u, subj, f'{current_user.username} left a message', url=discuss_url)
-            return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+
     messages = Message.query.filter_by(proposal_id=p.id).order_by(Message.created_at.asc()).all()
-    # pass explicit boolean whether current user has joined the proposal
-    joined = any(part.user_id == current_user.id for part in p.participants) if current_user.is_authenticated else False
-    return render_template('proposal_discuss.html', proposal=p, messages=messages, joined=joined)
+    reactions = {}
+    my_reactions = {}
+    for msg in messages:
+        r_dict = {}
+        r_mine = []
+        for r in msg.reactions:
+            r_dict[r.emoji] = r_dict.get(r.emoji, 0) + 1
+            if current_user.is_authenticated and r.user_id == current_user.id:
+                r_mine.append(r.emoji)
+        reactions[msg.id] = r_dict
+        my_reactions[msg.id] = r_mine
+    joined = is_participant
+    return render_template('proposal_discuss.html', proposal=p, messages=messages,
+                           joined=joined, can_post=can_post,
+                           reactions=reactions, my_reactions=my_reactions)
+
+
+@main.route('/proposal/<int:proposal_id>/messages/poll')
+@login_required
+def proposal_messages_poll(proposal_id):
+    p = Proposal.query.get_or_404(proposal_id)
+    after_id = request.args.get('after', 0, type=int)
+    msgs = (Message.query
+            .filter(Message.proposal_id == proposal_id, Message.id > after_id)
+            .order_by(Message.created_at.asc())
+            .all())
+    is_participant = any(pa.user_id == current_user.id for pa in p.participants)
+    can_post = is_participant or p.proposer_id == current_user.id or current_user.is_admin
+    result = []
+    for m in msgs:
+        msg_reactions = {}
+        user_reacted = []
+        for r in m.reactions:
+            msg_reactions[r.emoji] = msg_reactions.get(r.emoji, 0) + 1
+            if r.user_id == current_user.id:
+                user_reacted.append(r.emoji)
+        html = render_template('proposal_message_card.html',
+                               m=m, proposal=p,
+                               msg_reactions=msg_reactions,
+                               user_reacted=user_reacted,
+                               can_post=can_post)
+        result.append({'id': m.id, 'html': html})
+    return jsonify({'messages': result})
+
+
+@main.route('/proposal/<int:proposal_id>/messages/<int:message_id>/react', methods=['POST'])
+@login_required
+def proposal_react(proposal_id, message_id):
+    p = Proposal.query.get_or_404(proposal_id)
+    msg = Message.query.get_or_404(message_id)
+    if msg.proposal_id != proposal_id:
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+    emoji = request.form.get('emoji', '')
+    if emoji not in _ALLOWED_REACTIONS:
+        flash('Invalid reaction', 'warning')
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+    existing = MessageReaction.query.filter_by(message_id=message_id, user_id=current_user.id, emoji=emoji).first()
+    if existing:
+        db.session.delete(existing)
+    else:
+        db.session.add(MessageReaction(message_id=message_id, user_id=current_user.id, emoji=emoji))
+    db.session.commit()
+    return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id) + f'#message-{message_id}')
 
 
 # Admin mail config endpoints
