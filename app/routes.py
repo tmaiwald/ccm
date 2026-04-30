@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory, jsonify
 from . import db
-from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction
+from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem
 from flask_login import current_user, login_required
 from datetime import date, timedelta, time
 from calendar import monthrange
@@ -483,11 +483,23 @@ def calendar_view():
             Proposal.date >= today
         ).distinct().order_by(Proposal.date.asc(), Proposal.start_time.asc()).all()
 
+    # build per-proposal claimed shopping items for the current user
+    my_claimed = {}
+    if current_user.is_authenticated and commitments:
+        proposal_ids = [p.id for p in commitments]
+        claimed = ShoppingItem.query.filter(
+            ShoppingItem.proposal_id.in_(proposal_ids),
+            ShoppingItem.claimer_id == current_user.id
+        ).all()
+        for item in claimed:
+            my_claimed.setdefault(item.proposal_id, []).append(item)
+
     return render_template('calendar.html', days=days, recipes=recipes,
                            week=week, year=year,
                            prev_year=prev_year, prev_week=prev_week,
                            next_year=next_year, next_week=next_week,
-                           today=today, commitments=commitments)
+                           today=today, commitments=commitments,
+                           my_claimed=my_claimed)
 
 
 def make_thumbnail(saved_path, thumb_size=(400, 300), bg_color=(255,255,255)):
@@ -984,6 +996,63 @@ def claim_cook(proposal_id):
     return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
 
 
+@main.route('/proposal/<int:proposal_id>/shopping/add', methods=['POST'])
+@login_required
+def shopping_add(proposal_id):
+    p = Proposal.query.get_or_404(proposal_id)
+    is_participant = any(pa.user_id == current_user.id for pa in p.participants)
+    if not (is_participant or p.proposer_id == current_user.id or current_user.is_admin):
+        flash('You must be a participant to add items', 'warning')
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+    name = (request.form.get('name') or '').strip()[:200]
+    quantity = (request.form.get('quantity') or '').strip()[:100] or None
+    if not name:
+        flash('Item name cannot be empty', 'warning')
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+    item = ShoppingItem(proposal_id=p.id, name=name, quantity=quantity, added_by_id=current_user.id)
+    db.session.add(item)
+    db.session.commit()
+    return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+
+
+@main.route('/proposal/<int:proposal_id>/shopping/<int:item_id>/claim', methods=['POST'])
+@login_required
+def shopping_claim(proposal_id, item_id):
+    p = Proposal.query.get_or_404(proposal_id)
+    item = ShoppingItem.query.get_or_404(item_id)
+    if item.proposal_id != proposal_id:
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+    is_participant = any(pa.user_id == current_user.id for pa in p.participants)
+    if not (is_participant or p.proposer_id == current_user.id or current_user.is_admin):
+        flash('You must be a participant to claim items', 'warning')
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+    if item.claimer_id == current_user.id:
+        # unclaim
+        item.claimer_id = None
+    elif item.claimer_id is None:
+        item.claimer_id = current_user.id
+    else:
+        flash('Already claimed by someone else', 'warning')
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+    db.session.commit()
+    return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+
+
+@main.route('/proposal/<int:proposal_id>/shopping/<int:item_id>/delete', methods=['POST'])
+@login_required
+def shopping_delete(proposal_id, item_id):
+    p = Proposal.query.get_or_404(proposal_id)
+    item = ShoppingItem.query.get_or_404(item_id)
+    if item.proposal_id != proposal_id:
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+    if not (item.added_by_id == current_user.id or p.proposer_id == current_user.id or current_user.is_admin):
+        flash('No permission to delete this item', 'warning')
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+    db.session.delete(item)
+    db.session.commit()
+    return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+
+
 @main.route('/proposal/<int:proposal_id>/discuss', methods=['GET', 'POST'])
 @login_required
 def proposal_discuss(proposal_id):
@@ -1030,9 +1099,11 @@ def proposal_discuss(proposal_id):
         reactions[msg.id] = r_dict
         my_reactions[msg.id] = r_mine
     joined = is_participant
+    shopping_items = ShoppingItem.query.filter_by(proposal_id=p.id).order_by(ShoppingItem.created_at.asc()).all()
     return render_template('proposal_discuss.html', proposal=p, messages=messages,
                            joined=joined, can_post=can_post,
-                           reactions=reactions, my_reactions=my_reactions)
+                           reactions=reactions, my_reactions=my_reactions,
+                           shopping_items=shopping_items)
 
 
 @main.route('/proposal/<int:proposal_id>/messages/poll')

@@ -89,6 +89,21 @@ class Message(db.Model):
     reactions = db.relationship('MessageReaction', backref='message', cascade='all, delete-orphan', lazy=True)
 
 
+class ShoppingItem(db.Model):
+    __tablename__ = 'shopping_item'
+    id = db.Column(db.Integer, primary_key=True)
+    proposal_id = db.Column(db.Integer, db.ForeignKey('proposal.id'), nullable=False)
+    name = db.Column(db.String(200), nullable=False)
+    quantity = db.Column(db.String(100), nullable=True)
+    added_by_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    claimer_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    proposal = db.relationship('Proposal', backref=db.backref('shopping_items', lazy=True, cascade='all, delete-orphan'))
+    added_by = db.relationship('User', foreign_keys=[added_by_id], backref=db.backref('added_shopping_items', lazy=True))
+    claimer = db.relationship('User', foreign_keys=[claimer_id], backref=db.backref('claimed_shopping_items', lazy=True))
+
+
 class MessageReaction(db.Model):
     __tablename__ = 'message_reaction'
     id = db.Column(db.Integer, primary_key=True)

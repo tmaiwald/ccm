@@ -12,6 +12,7 @@
           {% set is_cook = (p.cook_user_id == current_user.id) %}
           {% set is_grocery = (p.grocery_user_id == current_user.id) %}
           {% set is_joined = p.participants|selectattr('user_id','equalto', current_user.id)|list %}
+          {% set my_items = my_claimed.get(p.id, []) %}
 
           <div class="card commit-card" style="min-width:220px;max-width:320px;">
             <div class="card-header">
@@ -29,17 +30,27 @@
                   {% if is_cook %}
                     <span class="badge bg-success">You will cook</span>
                   {% endif %}
-                  {% if is_grocery %}
-                    <span class="badge bg-info text-dark">You will do groceries</span>
-                  {% endif %}
-                  {% if (not is_cook and not is_grocery) and is_joined %}
+                  {% if (not is_cook) and is_joined %}
                     <span class="badge bg-secondary">You joined</span>
                   {% endif %}
-                  {% if (not is_cook and not is_grocery and not is_joined) %}
+                  {% if (not is_cook and not is_joined) %}
                     <span class="badge bg-light text-muted">No commitment</span>
                   {% endif %}
                 </div>
               </div>
+              {% if my_items %}
+                <div class="mt-2 border-top pt-1">
+                  <div class="small text-muted mb-1">
+                    <span class="material-icons" style="font-size:13px;vertical-align:middle;">shopping_cart</span>
+                    Your items:
+                  </div>
+                  {% for item in my_items %}
+                    <span class="badge bg-info text-dark me-1 mb-1" style="font-size:11px;">
+                      {{ item.name }}{% if item.quantity %} ({{ item.quantity }}){% endif %}
+                    </span>
+                  {% endfor %}
+                </div>
+              {% endif %}
             </div>
           </div>
         {% endfor %}
