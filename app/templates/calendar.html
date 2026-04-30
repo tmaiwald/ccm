@@ -166,9 +166,15 @@
                 <input type="number" name="max_participants" id="modalMaxSeats" class="form-control" min="1" placeholder="∞">
               </div>
               <div class="col-6">
-                <label class="form-label">Join deadline <small class="text-muted">(optional)</small></label>
-                <input type="datetime-local" name="join_deadline" id="modalJoinDeadline" class="form-control">
+                <div class="form-check mt-4 pt-1">
+                  <input class="form-check-input" type="checkbox" id="modalDeadlineToggle">
+                  <label class="form-check-label" for="modalDeadlineToggle">Set join deadline</label>
+                </div>
               </div>
+            </div>
+            <div class="mb-3" id="modalDeadlineRow" style="display:none;">
+              <label class="form-label">Join deadline <small class="text-muted">(default: 12h before start)</small></label>
+              <input type="datetime-local" name="join_deadline" id="modalJoinDeadline" class="form-control">
             </div>
             <div class="form-check mb-2">
               <input class="form-check-input" type="checkbox" name="auto_join" id="modalAutoJoin" value="1" checked>
@@ -188,9 +194,51 @@
   function openProposeModal(date){
     document.getElementById('modalDate').innerText = date;
     document.getElementById('modalDateInput').value = date;
+    // reset deadline toggle
+    var toggle = document.getElementById('modalDeadlineToggle');
+    toggle.checked = false;
+    document.getElementById('modalDeadlineRow').style.display = 'none';
+    // pre-compute default deadline (12h before start time on that date)
+    updateDefaultDeadline(date);
     var myModal = new bootstrap.Modal(document.getElementById('proposeModal'));
     myModal.show();
   }
+
+  function updateDefaultDeadline(date) {
+    var startVal = document.getElementById('modalStartTime').value || '12:00';
+    var parts = startVal.split(':');
+    var h = parseInt(parts[0], 10);
+    var m = parseInt(parts[1], 10);
+    // build a Date object for the proposal date at start time
+    var d = new Date(date + 'T' + pad(h) + ':' + pad(m) + ':00');
+    d.setHours(d.getHours() - 12);
+    // format as datetime-local value (YYYY-MM-DDTHH:MM)
+    var deadlineStr = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate())
+      + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    document.getElementById('modalJoinDeadline').value = deadlineStr;
+  }
+
+  function pad(n){ return n < 10 ? '0'+n : ''+n; }
+
+  document.addEventListener('DOMContentLoaded', function(){
+    var toggle = document.getElementById('modalDeadlineToggle');
+    var row = document.getElementById('modalDeadlineRow');
+    var deadlineInput = document.getElementById('modalJoinDeadline');
+    var startTimeInput = document.getElementById('modalStartTime');
+    var dateInput = document.getElementById('modalDateInput');
+
+    toggle.addEventListener('change', function(){
+      row.style.display = toggle.checked ? 'block' : 'none';
+      if(!toggle.checked) deadlineInput.value = '';
+    });
+
+    // recalculate default whenever start time changes (while toggle is checked)
+    startTimeInput.addEventListener('change', function(){
+      if(toggle.checked && dateInput.value){
+        updateDefaultDeadline(dateInput.value);
+      }
+    });
+  });
   </script>
 
   <style>
