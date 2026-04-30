@@ -75,6 +75,37 @@ def make_upload_filename(original_filename, username):
     return f"{datepart}_{uname}_{unique}.{ext}"
 
 
+GIF_MAX_BYTES = 20 * 1024 * 1024  # 20 MB raw limit for GIFs (animation must stay intact)
+
+
+def save_upload(file, username, max_size=(1600, 1600), quality=85):
+    """Save an uploaded image/gif; skip PIL for GIFs to preserve animation.
+    Returns saved filename or None on failure/size-exceeded.
+    """
+    if not file or not allowed_file(file.filename):
+        return None
+    original = secure_filename(file.filename)
+    ext = original.rsplit('.', 1)[1].lower() if '.' in original else 'jpg'
+    newname = make_upload_filename(original, username)
+    dst = os.path.join(UPLOAD_FOLDER, newname)
+    os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    if ext == 'gif':
+        raw = file.stream.read(GIF_MAX_BYTES + 1)
+        if len(raw) > GIF_MAX_BYTES:
+            return None
+        with open(dst, 'wb') as f:
+            f.write(raw)
+    else:
+        compressed = compress_image(file.stream, ext, max_size=max_size, quality=quality)
+        if compressed:
+            with open(dst, 'wb') as f:
+                f.write(compressed.read())
+        else:
+            file.stream.seek(0)
+            file.save(dst)
+    return newname
+
+
 def compress_image(file_stream, ext, max_size=(1600, 1600), quality=85):
     """Open an image from file_stream (werkzeug FileStorage .stream or bytes), resize if larger than max_size
     and return bytes for the compressed image.
@@ -1598,20 +1629,8 @@ def group_create():
 
     grp = Group(name=name, creator_id=current_user.id)
 
-    file = request.files.get('banner')
-    if file and allowed_file(file.filename):
-        original = secure_filename(file.filename)
-        ext = original.rsplit('.', 1)[1].lower() if '.' in original else 'jpg'
-        newname = make_upload_filename(original, current_user.username)
-        dst = os.path.join(UPLOAD_FOLDER, newname)
-        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-        compressed = compress_image(file.stream, ext, max_size=(1600, 500))
-        if compressed:
-            with open(dst, 'wb') as f:
-                f.write(compressed.read())
-        else:
-            file.stream.seek(0)
-            file.save(dst)
+    newname = save_upload(request.files.get('banner'), current_user.username, max_size=(1600, 500))
+    if newname:
         grp.banner_image = newname
 
     db.session.add(grp)
@@ -1660,6 +1679,23 @@ def group_delete(group_id):
     return redirect(url_for('main.groups_list'))
 
 
+@main.route('/groups/<int:group_id>/update_banner', methods=['POST'])
+@login_required
+def group_update_banner(group_id):
+    grp = Group.query.get_or_404(group_id)
+    if grp.creator_id != current_user.id and not getattr(current_user, 'is_admin', False):
+        flash('Not allowed', 'warning')
+        return redirect(url_for('main.group_detail', group_id=group_id))
+    newname = save_upload(request.files.get('banner'), current_user.username, max_size=(1600, 500))
+    if newname:
+        grp.banner_image = newname
+        db.session.commit()
+        flash('Banner updated', 'success')
+    else:
+        flash('No valid image provided (max 20 MB)', 'warning')
+    return redirect(url_for('main.group_detail', group_id=group_id))
+
+
 @main.route('/groups/<int:group_id>', methods=['GET', 'POST'])
 @login_required
 def group_detail(group_id):
@@ -1668,13 +1704,20 @@ def group_detail(group_id):
 
     if request.method == 'POST':
         content = request.form.get('content', '').strip()
-        if content:
-            if not membership:
-                flash('Join the group to post messages', 'warning')
-                return redirect(url_for('main.group_detail', group_id=group_id))
-            msg = GroupMessage(group_id=group_id, user_id=current_user.id, content=content)
-            db.session.add(msg)
-            db.session.commit()
+        if not membership:
+            flash('Join the group to post messages', 'warning')
+            return redirect(url_for('main.group_detail', group_id=group_id))
+        if not content and not request.files.get('attachment'):
+            return redirect(url_for('main.group_detail', group_id=group_id))
+        msg = GroupMessage(group_id=group_id, user_id=current_user.id, content=content)
+        att = save_upload(request.files.get('attachment'), current_user.username, max_size=(1200, 1200))
+        if att is None and request.files.get('attachment') and request.files['attachment'].filename:
+            flash('Attachment too large or unsupported format (images/GIFs, max 20 MB)', 'warning')
+            return redirect(url_for('main.group_detail', group_id=group_id))
+        msg.attachment = att
+        db.session.add(msg)
+        db.session.commit()
+        if content or att:
             _notify_group_message(grp, msg, current_user)
         return redirect(url_for('main.group_detail', group_id=group_id))
 
