@@ -6,54 +6,63 @@
      user_reacted   — list of emojis the current user reacted with
      is_member   — bool, whether current user is a group member
 #}
-<div class="border rounded p-2 mb-2" id="message-{{ m.id }}">
-  <div class="small text-muted mb-1">
-    {% if m.user.avatar %}
-      <img src="{{ url_for('static', filename='uploads/'~m.user.avatar) }}"
-           style="width:20px;height:20px;object-fit:cover;border-radius:4px;vertical-align:middle;margin-right:4px;">
+<div class="position-relative mb-4" id="message-{{ m.id }}">
+  <div class="border rounded p-2">
+    <div class="small text-muted mb-1">
+      {% if m.user.avatar %}
+        <img src="{{ url_for('static', filename='uploads/'~m.user.avatar) }}"
+             style="width:20px;height:20px;object-fit:cover;border-radius:4px;vertical-align:middle;margin-right:4px;">
+      {% endif %}
+      <a href="{{ url_for('main.profile', user_id=m.user_id) }}" class="text-decoration-none text-muted">{{ m.user.username }}</a>
+      &nbsp;·&nbsp; {{ m.created_at.strftime('%Y-%m-%d %H:%M') }}
+    </div>
+    {% if m.content %}<div class="md-content">{{ m.content | markdown }}</div>{% endif %}
+    {% if m.attachment %}
+      <div class="mt-1">
+        <img src="{{ url_for('static', filename='uploads/'~m.attachment) }}"
+             style="max-width:100%;max-height:400px;border-radius:6px;display:block;">
+      </div>
     {% endif %}
-    <a href="{{ url_for('main.profile', user_id=m.user_id) }}" class="text-decoration-none text-muted">{{ m.user.username }}</a>
-    &nbsp;·&nbsp; {{ m.created_at.strftime('%Y-%m-%d %H:%M') }}
-  </div>
-  {% if m.content %}<div class="md-content">{{ m.content | markdown }}</div>{% endif %}
-  {% if m.attachment %}
-    <div class="mt-1">
-      <img src="{{ url_for('static', filename='uploads/'~m.attachment) }}"
-           style="max-width:100%;max-height:400px;border-radius:6px;display:block;">
-    </div>
-  {% endif %}
-  {% if m.attachment_url %}
-    <div class="mt-1">
-      <img src="{{ m.attachment_url }}"
-           referrerpolicy="no-referrer"
-           style="max-width:100%;max-height:400px;border-radius:6px;display:block;"
-           loading="lazy">
-    </div>
-  {% endif %}
-  {# ── Reactions ── #}
-  <div class="d-flex flex-wrap gap-1 mt-2 align-items-center">
-    {% for r_emoji, count in msg_reactions.items() %}
-      <form method="post" action="{{ url_for('main.group_react', group_id=group.id, message_id=m.id) }}">
-        <input type="hidden" name="emoji" value="{{ r_emoji }}">
-        <button type="submit" class="btn btn-sm py-0 px-2 {% if r_emoji in user_reacted %}btn-primary{% else %}btn-outline-secondary{% endif %}"
-                style="font-size:0.85rem;line-height:1.6;border-radius:1rem;">{{ r_emoji }} {{ count }}</button>
-      </form>
-    {% endfor %}
-    {% if is_member %}
-      <div class="dropdown">
-        <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" data-bs-toggle="dropdown"
-                style="font-size:0.85rem;line-height:1.6;border-radius:1rem;" aria-label="React">+</button>
-        <div class="dropdown-menu p-2" style="min-width:auto;">
-          <div class="d-flex gap-1 flex-wrap">
-            {% for pick_emoji in ['👍','❤️','😂','😮','😢','👎','🎉','🔥'] %}
-              <form method="post" action="{{ url_for('main.group_react', group_id=group.id, message_id=m.id) }}">
-                <input type="hidden" name="emoji" value="{{ pick_emoji }}">
-                <button type="submit" class="btn p-1" style="font-size:1.2rem;line-height:1;background:none;border:none;">{{ pick_emoji }}</button>
-              </form>
-            {% endfor %}
-          </div>
-        </div>
+    {% if m.attachment_url %}
+      <div class="mt-1">
+        <img src="{{ m.attachment_url }}"
+             referrerpolicy="no-referrer"
+             style="max-width:100%;max-height:400px;border-radius:6px;display:block;"
+             loading="lazy">
       </div>
     {% endif %}
   </div>
+  {# ── Reactions — overlap the bottom edge of the card ── #}
+  {% if msg_reactions or is_member %}
+    <div class="d-flex flex-wrap gap-1 align-items-center"
+         style="position:absolute;bottom:-13px;left:10px;z-index:2;">
+      {% for r_emoji, count in msg_reactions.items() %}
+        <form method="post" action="{{ url_for('main.group_react', group_id=group.id, message_id=m.id) }}">
+          <input type="hidden" name="emoji" value="{{ r_emoji }}">
+          <button type="submit"
+                  class="btn btn-sm py-0 px-2 {% if r_emoji in user_reacted %}btn-primary{% else %}btn-outline-secondary bg-white{% endif %}"
+                  style="font-size:0.8rem;line-height:1.6;border-radius:1rem;box-shadow:0 1px 4px rgba(0,0,0,.18);">{{ r_emoji }} {{ count }}</button>
+        </form>
+      {% endfor %}
+      {% if is_member %}
+        <div class="dropdown">
+          <button type="button"
+                  class="btn btn-sm btn-outline-secondary bg-white py-0 px-2"
+                  data-bs-toggle="dropdown"
+                  style="font-size:0.8rem;line-height:1.6;border-radius:1rem;box-shadow:0 1px 4px rgba(0,0,0,.18);"
+                  aria-label="React">➕</button>
+          <div class="dropdown-menu p-2" style="min-width:auto;">
+            <div class="d-flex gap-1 flex-wrap" style="max-width:180px;">
+              {% for pick_emoji in ['👍','❤️','😂','😮','😢','👎','🎉','🔥'] %}
+                <form method="post" action="{{ url_for('main.group_react', group_id=group.id, message_id=m.id) }}">
+                  <input type="hidden" name="emoji" value="{{ pick_emoji }}">
+                  <button type="submit" class="btn p-1" style="font-size:1.2rem;line-height:1;background:none;border:none;">{{ pick_emoji }}</button>
+                </form>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      {% endif %}
+    </div>
+  {% endif %}
 </div>
