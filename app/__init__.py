@@ -18,6 +18,11 @@ def create_app():
     app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_path}"
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
     app.config["SECRET_KEY"] = "dev"
+    # Remember-me cookie: 90-day persistent login, secure in production
+    from datetime import timedelta
+    app.config["REMEMBER_COOKIE_DURATION"] = timedelta(days=90)
+    app.config["REMEMBER_COOKIE_HTTPONLY"] = True
+    app.config["REMEMBER_COOKIE_SECURE"] = os.environ.get("FLASK_ENV") == "production"
 
     db.init_app(app)
     login_manager.init_app(app)

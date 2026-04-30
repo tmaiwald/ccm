@@ -21,7 +21,7 @@ def register():
         u.set_password(password)
         db.session.add(u)
         db.session.commit()
-        login_user(u)
+        login_user(u, remember=True)
         return redirect(url_for('main.index'))
     return render_template('register.html')
 
@@ -33,7 +33,8 @@ def login():
         password = request.form.get('password', '')
         u = User.query.filter_by(username=username).first()
         if u and u.check_password(password):
-            login_user(u)
+            remember = bool(request.form.get('remember'))
+            login_user(u, remember=remember)
             return redirect(url_for('main.index'))
         flash('Invalid credentials', 'warning')
         return redirect(url_for('auth.login'))
