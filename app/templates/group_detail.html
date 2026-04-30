@@ -145,17 +145,37 @@
             <span class="material-icons" style="font-size:16px;vertical-align:middle;">send</span>
             Send
           </button>
-          <label class="btn btn-outline-secondary mb-0" title="Attach image or GIF (max 20 MB)">
-            <span class="material-icons" style="font-size:16px;vertical-align:middle;">gif_box</span>
-            <input type="file" name="attachment" accept="image/*,.gif" class="d-none" id="attachInput"
-                   onchange="document.getElementById('attachLabel').textContent = this.files[0]?.name ?? ''">
-            Upload GIF/image
-          </label>
-          <span id="attachLabel" class="small text-muted"></span>
-        </div>
-        <div class="mt-2">
-          <input type="text" name="attachment_url" class="form-control form-control-sm"
-                 placeholder="Or paste a GIF URL (Giphy, Tenor, Imgur…)">
+          {# ── Paperclip dropdown: file upload + URL ── #}
+          <div class="dropdown">
+            <button type="button" class="btn btn-outline-secondary" id="attachDropBtn"
+                    data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                    title="Attach image or GIF">
+              <span class="material-icons" style="font-size:18px;vertical-align:middle;">attach_file</span>
+            </button>
+            <div class="dropdown-menu p-3" style="min-width:300px;" aria-labelledby="attachDropBtn">
+              {# File upload #}
+              <label class="btn btn-outline-secondary btn-sm w-100 mb-2 text-start" style="font-weight:normal;">
+                <span class="material-icons" style="font-size:15px;vertical-align:middle;">upload_file</span>
+                Upload image / GIF
+                <input type="file" name="attachment" accept="image/*,.gif" class="d-none" id="attachInput"
+                       onchange="document.getElementById('attachLabel').textContent = this.files[0]?.name ?? ''">
+              </label>
+              <div class="small text-muted mb-1" id="attachLabel"></div>
+              <hr class="my-2">
+              {# URL #}
+              <label class="form-label small mb-1 fw-semibold">Or paste an image / GIF URL</label>
+              <input type="text" name="attachment_url" id="attachUrlInput" class="form-control form-control-sm"
+                     placeholder="https://media.giphy.com/…/giphy.gif">
+              <div class="small text-muted mt-1">
+                Find GIFs on
+                <a href="https://giphy.com" target="_blank" rel="noopener">Giphy</a>,
+                <a href="https://tenor.com" target="_blank" rel="noopener">Tenor</a> or
+                <a href="https://imgur.com" target="_blank" rel="noopener">Imgur</a>
+                — copy the direct image link and paste it here.
+              </div>
+            </div>
+          </div>
+          <span class="small text-muted" id="attachPreviewLabel"></span>
         </div>
       </form>
     {% else %}
@@ -234,6 +254,34 @@
       window.scrollTo(0, document.body.scrollHeight);
     }
   });
+
+  // ── Attachment indicator (outside dropdown) ───────────────────────
+  var attachInput  = document.getElementById('attachInput');
+  var attachUrlInput = document.getElementById('attachUrlInput');
+  var previewLabel = document.getElementById('attachPreviewLabel');
+  var internalLabel = document.getElementById('attachLabel');
+  var attachBtn    = document.getElementById('attachDropBtn');
+
+  function updateAttachIndicator() {
+    var name = attachInput && attachInput.files[0] ? attachInput.files[0].name : '';
+    var url  = attachUrlInput ? attachUrlInput.value.trim() : '';
+    if (name) {
+      previewLabel.textContent = name;
+      if (internalLabel) internalLabel.textContent = name;
+      attachBtn.classList.add('btn-secondary');
+      attachBtn.classList.remove('btn-outline-secondary');
+    } else if (url) {
+      previewLabel.textContent = '🔗 URL set';
+      attachBtn.classList.add('btn-secondary');
+      attachBtn.classList.remove('btn-outline-secondary');
+    } else {
+      previewLabel.textContent = '';
+      attachBtn.classList.remove('btn-secondary');
+      attachBtn.classList.add('btn-outline-secondary');
+    }
+  }
+  if (attachInput)    attachInput.addEventListener('change', updateAttachIndicator);
+  if (attachUrlInput) attachUrlInput.addEventListener('input',  updateAttachIndicator);
 
   // ── Live polling ─────────────────────────────────────────────────
   var groupId = {{ group.id }};
