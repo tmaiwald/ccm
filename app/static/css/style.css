@@ -105,6 +105,16 @@ img { border-radius: 8px; }
 }
 
 /* slight backdrop blur on icon buttons to feel elevated */
+/* Markdown-rendered message content */
+.md-content { line-height: 1.5; }
+.md-content p { margin-bottom: 0.4rem; }
+.md-content p:last-child { margin-bottom: 0; }
+.md-content ul, .md-content ol { padding-left: 1.4rem; margin-bottom: 0.4rem; }
+.md-content code { background: rgba(0,0,0,.06); padding: 1px 4px; border-radius: 3px; font-size: .88em; }
+.md-content pre { background: rgba(0,0,0,.06); padding: 0.6rem; border-radius: 4px; overflow-x: auto; }
+.md-content blockquote { border-left: 3px solid #ccc; margin: 0 0 0.4rem 0; padding-left: 0.75rem; color: #666; }
+.md-content h1, .md-content h2, .md-content h3 { font-size: 1rem; font-weight: 600; margin: 0.4rem 0 0.2rem; }
+
 .nav-icon-btn { backdrop-filter: blur(2px); }
 
 /* Mobile: subtle different notification background to stand out less on small screens */

@@ -28,6 +28,14 @@ def create_app():
     login_manager.init_app(app)
     migrate.init_app(app, db)
 
+    # Jinja2 filter: render message content as Markdown (HTML-escaped first)
+    import markdown as _md
+    from markupsafe import escape, Markup
+    def render_markdown(text):
+        escaped = str(escape(text or ''))
+        return Markup(_md.markdown(escaped, extensions=['nl2br']))
+    app.jinja_env.filters['markdown'] = render_markdown
+
     # register blueprints after db init to avoid context issues
     from .routes import main
     from .auth import auth as auth_bp

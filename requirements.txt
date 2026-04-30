@@ -7,3 +7,4 @@ cryptography
 Pillow
 pip
 pywebpush
+markdown
