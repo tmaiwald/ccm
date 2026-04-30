@@ -59,6 +59,10 @@
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 16 16" style="color:inherit;"><path d="M5.5 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5zM10.5 3a2 2 0 1 1 0 4 2 2 0 0 1 0-4z" fill="currentColor"/><path d="M1 13s1-3 4-3 4 3 4 3H1zm9 0s.5-2 3-2 3 2 3 2H10z" fill="currentColor"/></svg>
             </a>
 
+            <a class="nav-icon-btn me-2" href="{{ url_for('main.groups_list') }}" title="Groups" aria-label="Groups">
+              <span class="material-icons" style="font-size:20px;line-height:1;">groups</span>
+            </a>
+
             <!-- changed profile icon to gear and label -->
             <a class="nav-icon-btn me-2" href="{{ url_for('main.profile', user_id=current_user.id) }}" title="Profile settings" aria-label="Profile settings">
               <span class="material-icons" style="font-size:20px;line-height:1;">settings</span>

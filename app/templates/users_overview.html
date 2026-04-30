@@ -1,8 +1,13 @@
 {% extends "base.html" %}
 
 {% block content %}
-  <h2>Users</h2>
-  <p>Filter and browse all users.</p>
+  <div class="d-flex justify-content-between align-items-center mb-1">
+    <h2 class="mb-0">Users</h2>
+    <a href="{{ url_for('main.groups_list') }}" class="btn btn-outline-primary">
+      <span class="material-icons" style="font-size:18px;vertical-align:middle;margin-right:4px;">groups</span>Groups
+    </a>
+  </div>
+  <p class="text-muted">Filter and browse all users.</p>
 
   <div class="mb-3">
     <input id="filterInput" class="form-control" placeholder="Filter by username..." oninput="filterUsers()">

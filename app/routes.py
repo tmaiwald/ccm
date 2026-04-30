@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory
 from . import db
-from .models import Recipe, Proposal, Participant, User, Message, MailConfig, WebPushSubscription
+from .models import Recipe, Proposal, Participant, User, Message, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage
 from flask_login import current_user, login_required
 from datetime import date, timedelta, time
 from calendar import monthrange
@@ -1531,3 +1531,166 @@ def profile_update_credentials(user_id):
         flash('No changes detected', 'info')
 
     return redirect(url_for('main.profile', user_id=user_id))
+
+
+# ──────────────────────────────────────────────────────────────
+#  CCM Groups
+# ──────────────────────────────────────────────────────────────
+
+def _notify_group_message(group, message, sender):
+    """Send push + email notifications to group members (excluding sender)."""
+    cfg = MailConfig.query.first()
+    host = cfg.site_host.strip() if cfg and cfg.site_host else 'https://ccm-m.aiwald.de'
+    try:
+        group_url = url_for('main.group_detail', group_id=group.id)
+    except Exception:
+        group_url = f'/groups/{group.id}'
+    full_url = f"{host.rstrip('/')}{group_url}"
+
+    title = f"New message in {group.name}"
+    push_body = f"{sender.username}: {message.content[:80]}"
+    mail_recipients = []
+
+    for membership in group.memberships:
+        if membership.user_id == sender.id:
+            continue
+        u = membership.user
+        if membership.notify_push:
+            send_web_push_to_user(u, title, push_body, url=group_url)
+        if membership.notify_mail and u.email:
+            mail_recipients.append(u.email)
+
+    if mail_recipients:
+        short = message.content[:200] + ('…' if len(message.content) > 200 else '')
+        subject = f"[{group.name}] New message from {sender.username}"
+        text_body = (
+            f"Hello,\n\n{sender.username} posted a message in the group \"{group.name}\":\n\n"
+            f"\"{short}\"\n\nView the group: {full_url}\n\nBest regards,\nCleverly Connected Meals (CCM)"
+        )
+        html_body = (
+            f"<html><body>"
+            f"<p><strong>{sender.username}</strong> posted a message in the group <strong>{group.name}</strong>:</p>"
+            f"<blockquote style='border-left:3px solid #ccc;padding-left:1em;margin:1em 0'>{short}</blockquote>"
+            f"<p><a href='{full_url}'>Open group discussion</a></p>"
+            f"</body></html>"
+        )
+        send_mail(subject, text_body, mail_recipients, html_body)
+
+
+@main.route('/groups')
+@login_required
+def groups_list():
+    groups = Group.query.order_by(Group.created_at.desc()).all()
+    my_group_ids = {m.group_id for m in GroupMembership.query.filter_by(user_id=current_user.id).all()}
+    return render_template('groups_list.html', groups=groups, my_group_ids=my_group_ids)
+
+
+@main.route('/groups/create', methods=['POST'])
+@login_required
+def group_create():
+    name = request.form.get('name', '').strip()
+    if not name:
+        flash('Group name required', 'warning')
+        return redirect(url_for('main.groups_list'))
+    if len(name) > 100:
+        flash('Group name too long (max 100 characters)', 'warning')
+        return redirect(url_for('main.groups_list'))
+
+    grp = Group(name=name, creator_id=current_user.id)
+
+    file = request.files.get('banner')
+    if file and allowed_file(file.filename):
+        original = secure_filename(file.filename)
+        ext = original.rsplit('.', 1)[1].lower() if '.' in original else 'jpg'
+        newname = make_upload_filename(original, current_user.username)
+        dst = os.path.join(UPLOAD_FOLDER, newname)
+        os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+        compressed = compress_image(file.stream, ext, max_size=(1600, 500))
+        if compressed:
+            with open(dst, 'wb') as f:
+                f.write(compressed.read())
+        else:
+            file.stream.seek(0)
+            file.save(dst)
+        grp.banner_image = newname
+
+    db.session.add(grp)
+    db.session.flush()
+    db.session.add(GroupMembership(user_id=current_user.id, group_id=grp.id))
+    db.session.commit()
+    flash(f'Group "{name}" created', 'success')
+    return redirect(url_for('main.group_detail', group_id=grp.id))
+
+
+@main.route('/groups/<int:group_id>/join', methods=['POST'])
+@login_required
+def group_join(group_id):
+    grp = Group.query.get_or_404(group_id)
+    if GroupMembership.query.filter_by(user_id=current_user.id, group_id=group_id).first():
+        flash('Already a member', 'info')
+    else:
+        db.session.add(GroupMembership(user_id=current_user.id, group_id=group_id))
+        db.session.commit()
+        flash(f'Joined {grp.name}', 'success')
+    return redirect(url_for('main.group_detail', group_id=group_id))
+
+
+@main.route('/groups/<int:group_id>/leave', methods=['POST'])
+@login_required
+def group_leave(group_id):
+    grp = Group.query.get_or_404(group_id)
+    m = GroupMembership.query.filter_by(user_id=current_user.id, group_id=group_id).first()
+    if m:
+        db.session.delete(m)
+        db.session.commit()
+        flash(f'Left {grp.name}', 'success')
+    return redirect(url_for('main.groups_list'))
+
+
+@main.route('/groups/<int:group_id>/delete', methods=['POST'])
+@login_required
+def group_delete(group_id):
+    grp = Group.query.get_or_404(group_id)
+    if grp.creator_id != current_user.id and not getattr(current_user, 'is_admin', False):
+        flash('Not allowed', 'warning')
+        return redirect(url_for('main.groups_list'))
+    db.session.delete(grp)
+    db.session.commit()
+    flash('Group deleted', 'success')
+    return redirect(url_for('main.groups_list'))
+
+
+@main.route('/groups/<int:group_id>', methods=['GET', 'POST'])
+@login_required
+def group_detail(group_id):
+    grp = Group.query.get_or_404(group_id)
+    membership = GroupMembership.query.filter_by(user_id=current_user.id, group_id=group_id).first()
+
+    if request.method == 'POST':
+        content = request.form.get('content', '').strip()
+        if content:
+            if not membership:
+                flash('Join the group to post messages', 'warning')
+                return redirect(url_for('main.group_detail', group_id=group_id))
+            msg = GroupMessage(group_id=group_id, user_id=current_user.id, content=content)
+            db.session.add(msg)
+            db.session.commit()
+            _notify_group_message(grp, msg, current_user)
+        return redirect(url_for('main.group_detail', group_id=group_id))
+
+    messages = GroupMessage.query.filter_by(group_id=group_id).order_by(GroupMessage.created_at.asc()).all()
+    return render_template('group_detail.html', group=grp, messages=messages, membership=membership)
+
+
+@main.route('/groups/<int:group_id>/notifications', methods=['POST'])
+@login_required
+def group_update_notifications(group_id):
+    m = GroupMembership.query.filter_by(user_id=current_user.id, group_id=group_id).first()
+    if not m:
+        flash('Not a member of this group', 'warning')
+        return redirect(url_for('main.group_detail', group_id=group_id))
+    m.notify_push = bool(request.form.get('notify_push'))
+    m.notify_mail = bool(request.form.get('notify_mail'))
+    db.session.commit()
+    flash('Notification settings updated', 'success')
+    return redirect(url_for('main.group_detail', group_id=group_id))

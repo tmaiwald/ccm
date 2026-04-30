@@ -113,3 +113,40 @@ class WebPushSubscription(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     user = db.relationship('User', backref=db.backref('push_subscriptions', lazy=True, cascade='all, delete-orphan'))
+
+
+class Group(db.Model):
+    __tablename__ = 'ccm_group'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    banner_image = db.Column(db.String(255), nullable=True)
+    creator_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    creator = db.relationship('User', foreign_keys=[creator_id], backref=db.backref('created_groups', lazy=True))
+    memberships = db.relationship('GroupMembership', backref='group', cascade='all, delete-orphan', lazy=True)
+    group_messages = db.relationship('GroupMessage', backref='group', cascade='all, delete-orphan', lazy=True)
+
+
+class GroupMembership(db.Model):
+    __tablename__ = 'group_membership'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    group_id = db.Column(db.Integer, db.ForeignKey('ccm_group.id'), nullable=False)
+    notify_push = db.Column(db.Boolean, default=True)
+    notify_mail = db.Column(db.Boolean, default=True)
+    joined_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship('User', backref=db.backref('group_memberships', lazy=True))
+    __table_args__ = (db.UniqueConstraint('user_id', 'group_id'),)
+
+
+class GroupMessage(db.Model):
+    __tablename__ = 'group_message'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('ccm_group.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship('User', backref=db.backref('group_messages', lazy=True))

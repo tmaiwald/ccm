@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+
+{% block content %}
+
+{# ── Banner ── #}
+{% if group.banner_image %}
+  <div class="mb-3 rounded overflow-hidden" style="max-height:220px;">
+    <img src="{{ url_for('static', filename='uploads/'~group.banner_image) }}"
+         class="w-100" style="object-fit:cover;max-height:220px;display:block;">
+  </div>
+{% else %}
+  <div class="mb-3 rounded" style="height:80px;background:linear-gradient(135deg,#0f2430 0%,#1a5070 100%);"></div>
+{% endif %}
+
+{# ── Header row ── #}
+<div class="d-flex justify-content-between align-items-start mb-4 flex-wrap gap-2">
+  <div>
+    <h3 class="mb-0">{{ group.name }}</h3>
+    <div class="small text-muted">
+      <span class="material-icons" style="font-size:14px;vertical-align:middle;">person</span>
+      {{ group.memberships|length }} member{{ 's' if group.memberships|length != 1 }}
+      &nbsp;·&nbsp; Created by {{ group.creator.username }}
+    </div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    {% if membership %}
+      <form method="post" action="{{ url_for('main.group_leave', group_id=group.id) }}">
+        <button class="btn btn-sm btn-outline-secondary">Leave group</button>
+      </form>
+    {% else %}
+      <form method="post" action="{{ url_for('main.group_join', group_id=group.id) }}">
+        <button class="btn btn-sm btn-primary">Join group</button>
+      </form>
+    {% endif %}
+    {% if current_user.id == group.creator_id or current_user.is_admin %}
+      <form method="post" action="{{ url_for('main.group_delete', group_id=group.id) }}"
+            onsubmit="return confirm('Delete this group and all its messages?')">
+        <button class="btn btn-sm btn-outline-danger">Delete group</button>
+      </form>
+    {% endif %}
+    <a href="{{ url_for('main.groups_list') }}" class="btn btn-sm btn-outline-secondary">← All groups</a>
+  </div>
+</div>
+
+{# ── Two-column layout: members sidebar + messages main ── #}
+<div class="row g-3">
+
+  {# Sidebar: members + notification settings #}
+  <div class="col-12 col-md-3">
+
+    <div class="card mb-3">
+      <div class="card-header fw-semibold">
+        <span class="material-icons" style="font-size:16px;vertical-align:middle;">group</span>
+        Members ({{ group.memberships|length }})
+      </div>
+      <ul class="list-group list-group-flush">
+        {% for m in group.memberships %}
+          <li class="list-group-item d-flex align-items-center gap-2 py-2 px-3">
+            {% if m.user.avatar %}
+              <img src="{{ url_for('static', filename='uploads/'~m.user.avatar) }}"
+                   style="width:32px;height:32px;object-fit:cover;border-radius:5px;flex-shrink:0;">
+            {% else %}
+              <img src="{{ url_for('static', filename='img/default-avatar.svg') }}"
+                   style="width:32px;height:32px;object-fit:cover;border-radius:5px;flex-shrink:0;">
+            {% endif %}
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;">
+              <a href="{{ url_for('main.profile', user_id=m.user_id) }}" class="text-decoration-none text-body">{{ m.user.username }}</a>
+            </span>
+            {% if m.user_id == group.creator_id %}
+              <span class="badge bg-secondary ms-auto" style="font-size:0.62rem;flex-shrink:0;">creator</span>
+            {% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+
+    {% if membership %}
+      {# Per-group notification settings #}
+      <div class="card">
+        <div class="card-header fw-semibold">
+          <span class="material-icons" style="font-size:16px;vertical-align:middle;">notifications</span>
+          My notifications
+        </div>
+        <div class="card-body">
+          <form method="post" action="{{ url_for('main.group_update_notifications', group_id=group.id) }}">
+            <div class="form-check mb-2">
+              <input type="checkbox" class="form-check-input" id="notifyPush" name="notify_push" value="1"
+                     {% if membership.notify_push %}checked{% endif %}>
+              <label class="form-check-label" for="notifyPush">Push notifications</label>
+            </div>
+            <div class="form-check mb-3">
+              <input type="checkbox" class="form-check-input" id="notifyMail" name="notify_mail" value="1"
+                     {% if membership.notify_mail %}checked{% endif %}>
+              <label class="form-check-label" for="notifyMail">Email notifications</label>
+            </div>
+            <button class="btn btn-sm btn-outline-primary w-100">Save</button>
+          </form>
+        </div>
+      </div>
+    {% endif %}
+
+  </div>{# /sidebar #}
+
+  {# Main: messages + compose #}
+  <div class="col-12 col-md-9">
+
+    <h6 class="fw-semibold mb-2">
+      <span class="material-icons" style="font-size:18px;vertical-align:middle;">chat</span>
+      Messages
+    </h6>
+
+    <div class="mb-3" id="messagesContainer">
+      {% if messages %}
+        {% for m in messages %}
+          <div class="border rounded p-2 mb-2">
+            <div class="small text-muted mb-1">
+              {% if m.user.avatar %}
+                <img src="{{ url_for('static', filename='uploads/'~m.user.avatar) }}"
+                     style="width:20px;height:20px;object-fit:cover;border-radius:4px;vertical-align:middle;margin-right:4px;">
+              {% endif %}
+              <a href="{{ url_for('main.profile', user_id=m.user_id) }}" class="text-decoration-none text-muted">{{ m.user.username }}</a>
+              &nbsp;·&nbsp; {{ m.created_at.strftime('%Y-%m-%d %H:%M') }}
+            </div>
+            <div class="md-content">{{ m.content | markdown }}</div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <p class="text-muted">No messages yet — say hello!</p>
+      {% endif %}
+    </div>
+
+    {% if membership %}
+      <form method="post" action="{{ url_for('main.group_detail', group_id=group.id) }}">
+        <div class="mb-2">
+          <textarea name="content" class="form-control" rows="3"
+                    placeholder="Write a message… (Markdown supported)" required></textarea>
+        </div>
+        <button class="btn btn-primary">
+          <span class="material-icons" style="font-size:16px;vertical-align:middle;">send</span>
+          Send
+        </button>
+      </form>
+    {% else %}
+      <p class="text-muted fst-italic">Join this group to post messages.</p>
+    {% endif %}
+
+  </div>{# /main #}
+
+</div>{# /row #}
+
+<script>
+  // Scroll to bottom of messages on page load
+  document.addEventListener('DOMContentLoaded', function () {
+    var c = document.getElementById('messagesContainer');
+    if (c) c.scrollTop = c.scrollHeight;
+  });
+</script>
+{% endblock %}

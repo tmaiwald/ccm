@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h2 class="mb-0">Groups</h2>
+  <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createGroupModal">
+    <span class="material-icons" style="font-size:18px;vertical-align:middle;margin-right:4px;">group_add</span>New group
+  </button>
+</div>
+
+{% if groups %}
+  <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
+    {% for g in groups %}
+      <div class="col">
+        <div class="card h-100 overflow-hidden">
+          {% if g.banner_image %}
+            <img src="{{ url_for('static', filename='uploads/'~g.banner_image) }}"
+                 class="card-img-top" style="height:110px;object-fit:cover;">
+          {% else %}
+            <div style="height:60px;background:linear-gradient(135deg,#0f2430 0%,#1a5070 100%);"></div>
+          {% endif %}
+          <div class="card-body pb-2">
+            <h5 class="card-title mb-1">{{ g.name }}</h5>
+            <div class="small text-muted mb-2">
+              <span class="material-icons" style="font-size:14px;vertical-align:middle;">person</span>
+              {{ g.memberships|length }} member{{ 's' if g.memberships|length != 1 }}
+              &ensp;·&ensp; Created by {{ g.creator.username }}
+              {% if g.id in my_group_ids %}
+                <span class="badge bg-success ms-1">Joined</span>
+              {% endif %}
+            </div>
+          </div>
+          <div class="card-footer bg-transparent border-top-0 d-flex gap-2 pb-3">
+            <a href="{{ url_for('main.group_detail', group_id=g.id) }}" class="btn btn-sm btn-outline-primary">Open</a>
+            {% if g.id in my_group_ids %}
+              <form method="post" action="{{ url_for('main.group_leave', group_id=g.id) }}">
+                <button class="btn btn-sm btn-outline-secondary">Leave</button>
+              </form>
+            {% else %}
+              <form method="post" action="{{ url_for('main.group_join', group_id=g.id) }}">
+                <button class="btn btn-sm btn-primary">Join</button>
+              </form>
+            {% endif %}
+            {% if current_user.id == g.creator_id or current_user.is_admin %}
+              <form method="post" action="{{ url_for('main.group_delete', group_id=g.id) }}"
+                    onsubmit="return confirm('Delete group \'{{ g.name|replace("'","\\'")|e }}\' and all its messages?')" class="ms-auto">
+                <button class="btn btn-sm btn-outline-danger">Delete</button>
+              </form>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="text-center text-muted py-5">
+    <span class="material-icons" style="font-size:48px;opacity:0.3;">group</span>
+    <p class="mt-2">No groups yet — be the first to create one!</p>
+  </div>
+{% endif %}
+
+<!-- Create group modal -->
+<div class="modal fade" id="createGroupModal" tabindex="-1" aria-labelledby="createGroupModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="createGroupModalLabel">Create a new group</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form method="post" action="{{ url_for('main.group_create') }}" enctype="multipart/form-data">
+        <div class="modal-body">
+          <div class="mb-3">
+            <label class="form-label fw-semibold">Group name <span class="text-danger">*</span></label>
+            <input type="text" name="name" class="form-control" required maxlength="100"
+                   placeholder="e.g. Lunch crew">
+          </div>
+          <div class="mb-2">
+            <label class="form-label fw-semibold">Banner image <span class="text-muted fw-normal">(optional)</span></label>
+            <input type="file" name="banner" class="form-control" accept="image/*">
+            <div class="form-text">Displayed as a wide banner on the group page and as thumbnail in this list.</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create group</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}
