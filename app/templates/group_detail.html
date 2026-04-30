@@ -140,6 +140,14 @@
                      style="max-width:100%;max-height:400px;border-radius:6px;display:block;">
               </div>
             {% endif %}
+            {% if m.attachment_url %}
+              <div class="mt-1">
+                <img src="{{ m.attachment_url }}"
+                     referrerpolicy="no-referrer"
+                     style="max-width:100%;max-height:400px;border-radius:6px;display:block;"
+                     loading="lazy">
+              </div>
+            {% endif %}
             {# ── Reactions ── #}
             {% set msg_reactions = reactions.get(m.id, {}) %}
             {% set user_reacted = my_reactions.get(m.id, []) %}
@@ -188,9 +196,13 @@
             <span class="material-icons" style="font-size:16px;vertical-align:middle;">gif_box</span>
             <input type="file" name="attachment" accept="image/*,.gif" class="d-none" id="attachInput"
                    onchange="document.getElementById('attachLabel').textContent = this.files[0]?.name ?? ''">
-            GIF / image
+            Upload GIF/image
           </label>
           <span id="attachLabel" class="small text-muted"></span>
+        </div>
+        <div class="mt-2">
+          <input type="text" name="attachment_url" class="form-control form-control-sm"
+                 placeholder="Or paste a GIF URL (Giphy, Tenor, Imgur…)">
         </div>
       </form>
     {% else %}

@@ -1715,9 +1715,15 @@ def group_detail(group_id):
             flash('Attachment too large or unsupported format (images/GIFs, max 20 MB)', 'warning')
             return redirect(url_for('main.group_detail', group_id=group_id))
         msg.attachment = att
+        # external GIF/image URL (Giphy, Tenor, Imgur, …)
+        att_url = (request.form.get('attachment_url') or '').strip()
+        # only accept http(s) URLs pointing to image-like paths or known GIF hosts
+        import re as _re
+        if att_url and _re.match(r'^https?://', att_url):
+            msg.attachment_url = att_url
         db.session.add(msg)
         db.session.commit()
-        if content or att:
+        if content or att or att_url:
             _notify_group_message(grp, msg, current_user)
         return redirect(url_for('main.group_detail', group_id=group_id))
 

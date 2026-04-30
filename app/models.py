@@ -148,6 +148,7 @@ class GroupMessage(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     content = db.Column(db.Text, nullable=False)
     attachment = db.Column(db.String(255), nullable=True)
+    attachment_url = db.Column(db.String(1024), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     user = db.relationship('User', backref=db.backref('group_messages', lazy=True))
