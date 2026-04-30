@@ -150,3 +150,16 @@ class GroupMessage(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     user = db.relationship('User', backref=db.backref('group_messages', lazy=True))
+
+
+class GroupMessageReaction(db.Model):
+    __tablename__ = 'group_message_reaction'
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.Integer, db.ForeignKey('group_message.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    emoji = db.Column(db.String(10), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship('User', backref=db.backref('group_reactions', lazy=True))
+    message = db.relationship('GroupMessage', backref=db.backref('reactions', lazy=True, cascade='all, delete-orphan'))
+    __table_args__ = (db.UniqueConstraint('message_id', 'user_id', 'emoji'),)

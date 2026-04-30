@@ -38,6 +38,11 @@
         <button class="btn btn-sm btn-outline-danger">Delete group</button>
       </form>
     {% endif %}
+    {% if membership %}
+      <button type="button" class="btn btn-sm btn-outline-secondary d-md-none" data-bs-toggle="offcanvas" data-bs-target="#notifOffcanvas" title="Notification settings">
+        <span class="material-icons" style="font-size:16px;vertical-align:middle;">settings</span>
+      </button>
+    {% endif %}
     <a href="{{ url_for('main.groups_list') }}" class="btn btn-sm btn-outline-secondary">← All groups</a>
   </div>
 </div>
@@ -75,8 +80,8 @@
     </div>
 
     {% if membership %}
-      {# Per-group notification settings #}
-      <div class="card">
+      {# Per-group notification settings — desktop only; mobile uses the gear offcanvas #}
+      <div class="card d-none d-md-block">
         <div class="card-header fw-semibold">
           <span class="material-icons" style="font-size:16px;vertical-align:middle;">notifications</span>
           My notifications
@@ -112,7 +117,7 @@
     <div class="mb-3" id="messagesContainer">
       {% if messages %}
         {% for m in messages %}
-          <div class="border rounded p-2 mb-2">
+          <div class="border rounded p-2 mb-2" id="message-{{ m.id }}">
             <div class="small text-muted mb-1">
               {% if m.user.avatar %}
                 <img src="{{ url_for('static', filename='uploads/'~m.user.avatar) }}"
@@ -122,6 +127,32 @@
               &nbsp;·&nbsp; {{ m.created_at.strftime('%Y-%m-%d %H:%M') }}
             </div>
             <div class="md-content">{{ m.content | markdown }}</div>
+            {# ── Reactions ── #}
+            {% set msg_reactions = reactions.get(m.id, {}) %}
+            {% set user_reacted = my_reactions.get(m.id, set()) %}
+            <div class="d-flex flex-wrap gap-1 mt-2 align-items-center">
+              {% for r_emoji, count in msg_reactions.items() %}
+                <form method="post" action="{{ url_for('main.group_react', group_id=group.id, message_id=m.id) }}">
+                  <input type="hidden" name="emoji" value="{{ r_emoji }}">
+                  <button type="submit" class="btn btn-sm py-0 px-2 {% if r_emoji in user_reacted %}btn-primary{% else %}btn-outline-secondary{% endif %}" style="font-size:0.85rem;line-height:1.6;border-radius:1rem;">{{ r_emoji }} {{ count }}</button>
+                </form>
+              {% endfor %}
+              {% if membership %}
+                <div class="dropdown">
+                  <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" data-bs-toggle="dropdown" style="font-size:0.85rem;line-height:1.6;border-radius:1rem;" aria-label="React">+</button>
+                  <div class="dropdown-menu p-2" style="min-width:auto;">
+                    <div class="d-flex gap-1 flex-wrap">
+                      {% for pick_emoji in ['👍','❤️','😂','😮','😢','👎','🎉','🔥'] %}
+                        <form method="post" action="{{ url_for('main.group_react', group_id=group.id, message_id=m.id) }}">
+                          <input type="hidden" name="emoji" value="{{ pick_emoji }}">
+                          <button type="submit" class="btn p-1" style="font-size:1.2rem;line-height:1;background:none;border:none;">{{ pick_emoji }}</button>
+                        </form>
+                      {% endfor %}
+                    </div>
+                  </div>
+                </div>
+              {% endif %}
+            </div>
           </div>
         {% endfor %}
       {% else %}
@@ -148,11 +179,47 @@
 
 </div>{# /row #}
 
+{# ── Mobile: notification settings offcanvas ── #}
+{% if membership %}
+<div class="offcanvas offcanvas-bottom" tabindex="-1" id="notifOffcanvas" aria-labelledby="notifOffcanvasLabel" style="height:auto;max-height:60vh;">
+  <div class="offcanvas-header">
+    <h5 class="offcanvas-title" id="notifOffcanvasLabel">
+      <span class="material-icons" style="font-size:18px;vertical-align:middle;">notifications</span>
+      Notifications — {{ group.name }}
+    </h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+  </div>
+  <div class="offcanvas-body">
+    <form method="post" action="{{ url_for('main.group_update_notifications', group_id=group.id) }}">
+      <div class="form-check mb-2">
+        <input type="checkbox" class="form-check-input" id="notifyPushM" name="notify_push" value="1"
+               {% if membership.notify_push %}checked{% endif %}>
+        <label class="form-check-label" for="notifyPushM">Push notifications</label>
+      </div>
+      <div class="form-check mb-3">
+        <input type="checkbox" class="form-check-input" id="notifyMailM" name="notify_mail" value="1"
+               {% if membership.notify_mail %}checked{% endif %}>
+        <label class="form-check-label" for="notifyMailM">Email notifications</label>
+      </div>
+      <button class="btn btn-primary">Save settings</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{# ── KaTeX for LaTeX formula rendering ── #}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" crossorigin="anonymous"
+  onload="document.querySelectorAll('.md-content').forEach(function(el){renderMathInElement(el,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false},{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}],ignoredTags:['script','noscript','style','textarea','pre','code'],throwOnError:false});});"></script>
+
 <script>
-  // Scroll to bottom of messages on page load
   document.addEventListener('DOMContentLoaded', function () {
-    var c = document.getElementById('messagesContainer');
-    if (c) c.scrollTop = c.scrollHeight;
+    // Auto-scroll to bottom only on initial load (not when anchored to a reaction)
+    if (!window.location.hash) {
+      var c = document.getElementById('messagesContainer');
+      if (c) c.scrollTop = c.scrollHeight;
+    }
   });
 </script>
 {% endblock %}

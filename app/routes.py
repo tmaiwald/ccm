@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory
 from . import db
-from .models import Recipe, Proposal, Participant, User, Message, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage
+from .models import Recipe, Proposal, Participant, User, Message, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction
 from flask_login import current_user, login_required
 from datetime import date, timedelta, time
 from calendar import monthrange
@@ -1679,7 +1679,17 @@ def group_detail(group_id):
         return redirect(url_for('main.group_detail', group_id=group_id))
 
     messages = GroupMessage.query.filter_by(group_id=group_id).order_by(GroupMessage.created_at.asc()).all()
-    return render_template('group_detail.html', group=grp, messages=messages, membership=membership)
+    reactions = {}
+    my_reactions = {}
+    for msg in messages:
+        reactions[msg.id] = {}
+        my_reactions[msg.id] = set()
+        for r in msg.reactions:
+            reactions[msg.id][r.emoji] = reactions[msg.id].get(r.emoji, 0) + 1
+            if r.user_id == current_user.id:
+                my_reactions[msg.id].add(r.emoji)
+    return render_template('group_detail.html', group=grp, messages=messages, membership=membership,
+                           reactions=reactions, my_reactions=my_reactions)
 
 
 @main.route('/groups/<int:group_id>/notifications', methods=['POST'])
@@ -1694,3 +1704,32 @@ def group_update_notifications(group_id):
     db.session.commit()
     flash('Notification settings updated', 'success')
     return redirect(url_for('main.group_detail', group_id=group_id))
+
+
+_ALLOWED_REACTIONS = frozenset({'👍', '❤️', '😂', '😮', '😢', '👎', '🎉', '🔥'})
+
+
+@main.route('/groups/<int:group_id>/messages/<int:message_id>/react', methods=['POST'])
+@login_required
+def group_react(group_id, message_id):
+    Group.query.get_or_404(group_id)
+    msg = GroupMessage.query.get_or_404(message_id)
+    if msg.group_id != group_id:
+        flash('Not found', 'warning')
+        return redirect(url_for('main.group_detail', group_id=group_id))
+    if not GroupMembership.query.filter_by(user_id=current_user.id, group_id=group_id).first():
+        flash('Join the group to react to messages', 'warning')
+        return redirect(url_for('main.group_detail', group_id=group_id))
+    emoji = request.form.get('emoji', '')
+    if emoji not in _ALLOWED_REACTIONS:
+        flash('Invalid reaction', 'warning')
+        return redirect(url_for('main.group_detail', group_id=group_id))
+    existing = GroupMessageReaction.query.filter_by(
+        message_id=message_id, user_id=current_user.id, emoji=emoji
+    ).first()
+    if existing:
+        db.session.delete(existing)
+    else:
+        db.session.add(GroupMessageReaction(message_id=message_id, user_id=current_user.id, emoji=emoji))
+    db.session.commit()
+    return redirect(url_for('main.group_detail', group_id=group_id) + f'#message-{message_id}')
