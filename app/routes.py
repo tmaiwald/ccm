@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory
+from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory, jsonify
 from . import db
 from .models import Recipe, Proposal, Participant, User, Message, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction
 from flask_login import current_user, login_required
@@ -1782,3 +1782,39 @@ def group_react(group_id, message_id):
         db.session.add(GroupMessageReaction(message_id=message_id, user_id=current_user.id, emoji=emoji))
     db.session.commit()
     return redirect(url_for('main.group_detail', group_id=group_id) + f'#message-{message_id}')
+
+
+@main.route('/groups/<int:group_id>/messages/poll')
+@login_required
+def group_messages_poll(group_id):
+    """JSON endpoint for live-polling new messages (short-polling)."""
+    grp = Group.query.get_or_404(group_id)
+    membership = GroupMembership.query.filter_by(user_id=current_user.id, group_id=group_id).first()
+    if not membership and not current_user.is_admin:
+        return jsonify({'error': 'forbidden'}), 403
+
+    after_id = request.args.get('after', 0, type=int)
+    msgs = (GroupMessage.query
+            .filter(GroupMessage.group_id == group_id, GroupMessage.id > after_id)
+            .order_by(GroupMessage.created_at.asc())
+            .all())
+
+    result = []
+    for m in msgs:
+        msg_reactions = {}
+        user_reacted = []
+        for r in m.reactions:
+            msg_reactions[r.emoji] = msg_reactions.get(r.emoji, 0) + 1
+            if r.user_id == current_user.id:
+                user_reacted.append(r.emoji)
+        html = render_template(
+            'group_message_card.html',
+            m=m,
+            group=grp,
+            msg_reactions=msg_reactions,
+            user_reacted=user_reacted,
+            is_member=bool(membership),
+        )
+        result.append({'id': m.id, 'html': html})
+
+    return jsonify({'messages': result})

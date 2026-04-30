@@ -124,60 +124,13 @@
     <div class="mb-3" id="messagesContainer">
       {% if messages %}
         {% for m in messages %}
-          <div class="border rounded p-2 mb-2" id="message-{{ m.id }}">
-            <div class="small text-muted mb-1">
-              {% if m.user.avatar %}
-                <img src="{{ url_for('static', filename='uploads/'~m.user.avatar) }}"
-                     style="width:20px;height:20px;object-fit:cover;border-radius:4px;vertical-align:middle;margin-right:4px;">
-              {% endif %}
-              <a href="{{ url_for('main.profile', user_id=m.user_id) }}" class="text-decoration-none text-muted">{{ m.user.username }}</a>
-              &nbsp;·&nbsp; {{ m.created_at.strftime('%Y-%m-%d %H:%M') }}
-            </div>
-            {% if m.content %}<div class="md-content">{{ m.content | markdown }}</div>{% endif %}
-            {% if m.attachment %}
-              <div class="mt-1">
-                <img src="{{ url_for('static', filename='uploads/'~m.attachment) }}"
-                     style="max-width:100%;max-height:400px;border-radius:6px;display:block;">
-              </div>
-            {% endif %}
-            {% if m.attachment_url %}
-              <div class="mt-1">
-                <img src="{{ m.attachment_url }}"
-                     referrerpolicy="no-referrer"
-                     style="max-width:100%;max-height:400px;border-radius:6px;display:block;"
-                     loading="lazy">
-              </div>
-            {% endif %}
-            {# ── Reactions ── #}
-            {% set msg_reactions = reactions.get(m.id, {}) %}
-            {% set user_reacted = my_reactions.get(m.id, []) %}
-            <div class="d-flex flex-wrap gap-1 mt-2 align-items-center">
-              {% for r_emoji, count in msg_reactions.items() %}
-                <form method="post" action="{{ url_for('main.group_react', group_id=group.id, message_id=m.id) }}">
-                  <input type="hidden" name="emoji" value="{{ r_emoji }}">
-                  <button type="submit" class="btn btn-sm py-0 px-2 {% if r_emoji in user_reacted %}btn-primary{% else %}btn-outline-secondary{% endif %}" style="font-size:0.85rem;line-height:1.6;border-radius:1rem;">{{ r_emoji }} {{ count }}</button>
-                </form>
-              {% endfor %}
-              {% if membership %}
-                <div class="dropdown">
-                  <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" data-bs-toggle="dropdown" style="font-size:0.85rem;line-height:1.6;border-radius:1rem;" aria-label="React">+</button>
-                  <div class="dropdown-menu p-2" style="min-width:auto;">
-                    <div class="d-flex gap-1 flex-wrap">
-                      {% for pick_emoji in ['👍','❤️','😂','😮','😢','👎','🎉','🔥'] %}
-                        <form method="post" action="{{ url_for('main.group_react', group_id=group.id, message_id=m.id) }}">
-                          <input type="hidden" name="emoji" value="{{ pick_emoji }}">
-                          <button type="submit" class="btn p-1" style="font-size:1.2rem;line-height:1;background:none;border:none;">{{ pick_emoji }}</button>
-                        </form>
-                      {% endfor %}
-                    </div>
-                  </div>
-                </div>
-              {% endif %}
-            </div>
-          </div>
+          {% set msg_reactions = reactions.get(m.id, {}) %}
+          {% set user_reacted = my_reactions.get(m.id, []) %}
+          {% set is_member = membership is not none %}
+          {% include 'group_message_card.html' %}
         {% endfor %}
       {% else %}
-        <p class="text-muted">No messages yet — say hello!</p>
+        <p class="text-muted" id="noMsgsPlaceholder">No messages yet — say hello!</p>
       {% endif %}
     </div>
 
@@ -272,12 +225,97 @@
   onload="document.querySelectorAll('.md-content').forEach(function(el){renderMathInElement(el,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false},{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}],ignoredTags:['script','noscript','style','textarea','pre','code'],throwOnError:false});});"></script>
 
 <script>
+(function () {
+  'use strict';
+
+  // ── Initial scroll ───────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', function () {
-    // Auto-scroll to bottom only on initial load (not when anchored to a reaction)
     if (!window.location.hash) {
-      var c = document.getElementById('messagesContainer');
-      if (c) c.scrollTop = c.scrollHeight;
+      window.scrollTo(0, document.body.scrollHeight);
     }
   });
+
+  // ── Live polling ─────────────────────────────────────────────────
+  var groupId = {{ group.id }};
+  var container = document.getElementById('messagesContainer');
+  if (!container) return;
+
+  // Track highest rendered message id
+  var lastId = 0;
+  container.querySelectorAll('[id^="message-"]').forEach(function (el) {
+    var id = parseInt(el.id.replace('message-', ''), 10);
+    if (id > lastId) lastId = id;
+  });
+
+  // "↓ New messages" fixed banner
+  var banner = document.createElement('div');
+  banner.innerHTML = '&#8595; New messages';
+  banner.className = 'btn btn-primary btn-sm shadow';
+  banner.style.cssText = 'display:none;position:fixed;bottom:70px;left:50%;transform:translateX(-50%);' +
+    'z-index:1050;border-radius:999px;padding:4px 16px;cursor:pointer;';
+  banner.addEventListener('click', function () {
+    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+    banner.style.display = 'none';
+  });
+  document.body.appendChild(banner);
+
+  function isNearBottom() {
+    return window.scrollY + window.innerHeight >= document.body.scrollHeight - 120;
+  }
+
+  // Re-run KaTeX on newly added elements
+  function renderKatex(root) {
+    if (typeof renderMathInElement === 'undefined') return;
+    root.querySelectorAll('.md-content').forEach(function (el) {
+      renderMathInElement(el, {
+        delimiters: [
+          { left: '$$', right: '$$', display: true },
+          { left: '$',  right: '$',  display: false },
+          { left: '\\(', right: '\\)', display: false },
+          { left: '\\[', right: '\\]', display: true }
+        ],
+        ignoredTags: ['script','noscript','style','textarea','pre','code'],
+        throwOnError: false
+      });
+    });
+  }
+
+  function poll() {
+    fetch('/groups/' + groupId + '/messages/poll?after=' + lastId, {
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (data) {
+      if (!data || !data.messages || !data.messages.length) return;
+
+      var wasNearBottom = isNearBottom();
+
+      // Remove "no messages" placeholder
+      var ph = document.getElementById('noMsgsPlaceholder');
+      if (ph) ph.remove();
+
+      data.messages.forEach(function (msg) {
+        // Avoid duplicates (e.g. own message just sent)
+        if (document.getElementById('message-' + msg.id)) return;
+        var tmp = document.createElement('div');
+        tmp.innerHTML = msg.html;
+        var el = tmp.firstElementChild;
+        container.appendChild(el);
+        lastId = Math.max(lastId, msg.id);
+        renderKatex(el);
+      });
+
+      if (wasNearBottom) {
+        window.scrollTo(0, document.body.scrollHeight);
+        banner.style.display = 'none';
+      } else {
+        banner.style.display = '';
+      }
+    })
+    .catch(function () {});
+  }
+
+  setInterval(poll, 4000);
+})();
 </script>
 {% endblock %}
