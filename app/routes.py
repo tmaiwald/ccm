@@ -1683,11 +1683,11 @@ def group_detail(group_id):
     my_reactions = {}
     for msg in messages:
         reactions[msg.id] = {}
-        my_reactions[msg.id] = set()
+        my_reactions[msg.id] = []
         for r in msg.reactions:
             reactions[msg.id][r.emoji] = reactions[msg.id].get(r.emoji, 0) + 1
             if r.user_id == current_user.id:
-                my_reactions[msg.id].add(r.emoji)
+                my_reactions[msg.id].append(r.emoji)
     return render_template('group_detail.html', group=grp, messages=messages, membership=membership,
                            reactions=reactions, my_reactions=my_reactions)
 

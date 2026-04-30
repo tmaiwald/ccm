@@ -129,7 +129,7 @@
             <div class="md-content">{{ m.content | markdown }}</div>
             {# ── Reactions ── #}
             {% set msg_reactions = reactions.get(m.id, {}) %}
-            {% set user_reacted = my_reactions.get(m.id, set()) %}
+            {% set user_reacted = my_reactions.get(m.id, []) %}
             <div class="d-flex flex-wrap gap-1 mt-2 align-items-center">
               {% for r_emoji, count in msg_reactions.items() %}
                 <form method="post" action="{{ url_for('main.group_react', group_id=group.id, message_id=m.id) }}">
