@@ -70,7 +70,9 @@
               </div>
               <div class="card-body p-2">
                 {% for p in day.proposals %}
-                  <div class="proposal p-2 mb-2 border rounded" data-bs-toggle="tooltip" data-bs-placement="top" title="Discuss this proposal">
+                  {% set seats_left = (p.max_participants - p.participants|length) if p.max_participants is not none else none %}
+                  {% set is_full = (p.max_participants is not none and p.participants|length >= p.max_participants) %}
+                  <div class="proposal p-2 mb-2 border rounded{% if is_full %} border-danger{% endif %}" data-bs-toggle="tooltip" data-bs-placement="top" title="Discuss this proposal">
                     <a class="stretched-link" href="{{ url_for('main.proposal_discuss', proposal_id=p.id) }}" aria-hidden="true"></a>
                     <div class="d-flex justify-content-between align-items-start">
                       <div>
@@ -93,7 +95,7 @@
                               </form>
                             {% else %}
                               <form method="post" action="{{ url_for('main.join_proposal', proposal_id=p.id) }}">
-                                <button class="btn btn-sm btn-primary">Join</button>
+                                <button class="btn btn-sm btn-primary" {% if is_full %}disabled{% endif %}>Join</button>
                               </form>
                             {% endif %}
                             {% if p.proposer_id == current_user.id or current_user.is_admin %}
@@ -105,7 +107,11 @@
                         {% endif %}
                       </div>
                     </div>
-                    <div class="small mt-1">Joined: {{ p.participants|length }}</div>
+                    <div class="small mt-1 d-flex flex-wrap gap-1 align-items-center">
+                      <span>Joined: {{ p.participants|length }}{% if p.max_participants is not none %}/{{ p.max_participants }}{% endif %}</span>
+                      {% if is_full %}<span class="badge bg-danger">Full</span>{% endif %}
+                      {% if p.join_deadline %}<span class="badge bg-secondary" title="Join by">⏰ {{ p.join_deadline.strftime('%d.%m %H:%M') }}</span>{% endif %}
+                    </div>
                   </div>
                 {% endfor %}
 
@@ -153,6 +159,16 @@
             <div class="mb-3">
               <label class="form-label">Start time</label>
               <input type="time" name="start_time" id="modalStartTime" class="form-control" value="12:00">
+            </div>
+            <div class="row g-2 mb-3">
+              <div class="col-6">
+                <label class="form-label">Max seats <small class="text-muted">(optional)</small></label>
+                <input type="number" name="max_participants" id="modalMaxSeats" class="form-control" min="1" placeholder="∞">
+              </div>
+              <div class="col-6">
+                <label class="form-label">Join deadline <small class="text-muted">(optional)</small></label>
+                <input type="datetime-local" name="join_deadline" id="modalJoinDeadline" class="form-control">
+              </div>
             </div>
             <div class="form-check mb-2">
               <input class="form-check-input" type="checkbox" name="auto_join" id="modalAutoJoin" value="1" checked>

@@ -54,6 +54,10 @@ class Proposal(db.Model):
     grocery_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     # new: cook user (who will prepare/cook the meal)
     cook_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
+    # max number of participants (None = unlimited)
+    max_participants = db.Column(db.Integer, nullable=True)
+    # deadline for joining (None = no deadline)
+    join_deadline = db.Column(db.DateTime, nullable=True)
 
     recipe = db.relationship('Recipe', backref=db.backref('proposals', lazy=True))
     participants = db.relationship('Participant', backref='proposal', cascade='all, delete-orphan', lazy=True)

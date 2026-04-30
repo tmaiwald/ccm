@@ -537,6 +537,12 @@ def propose_recipe(recipe_id, date_str):
             st = None
     p = Proposal(date=d, recipe_id=recipe_id, proposer_id=current_user.id)
     p.start_time = st
+    try:
+        p.max_participants = int(request.form.get('max_participants')) if request.form.get('max_participants') else None
+    except (ValueError, TypeError):
+        p.max_participants = None
+    deadline_str = request.form.get('join_deadline')
+    p.join_deadline = datetime.fromisoformat(deadline_str) if deadline_str else None
     db.session.add(p)
     db.session.commit()
     flash('Proposal created', 'success')
@@ -566,6 +572,12 @@ def create_proposal(recipe_id, date_str):
             st = None
     p = Proposal(date=d, recipe_id=recipe_id, proposer_id=current_user.id)
     p.start_time = st
+    try:
+        p.max_participants = int(request.form.get('max_participants')) if request.form.get('max_participants') else None
+    except (ValueError, TypeError):
+        p.max_participants = None
+    deadline_str = request.form.get('join_deadline')
+    p.join_deadline = datetime.fromisoformat(deadline_str) if deadline_str else None
     db.session.add(p)
     db.session.commit()
     flash('Proposal created', 'success')
@@ -588,6 +600,22 @@ def join_proposal(proposal_id):
     if any(part.user_id == current_user.id for part in p.participants):
         flash('Already joined', 'info')
     else:
+        # enforce deadline
+        if p.join_deadline and datetime.utcnow() > p.join_deadline:
+            flash('The joining deadline for this proposal has passed', 'warning')
+            next_param = (request.form.get('next') or request.args.get('next') or '').lower()
+            if next_param == 'discuss':
+                return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+            py, pw, _ = p.date.isocalendar()
+            return redirect(url_for('main.calendar_view', year=py, week=pw))
+        # enforce seat limit
+        if p.max_participants is not None and len(p.participants) >= p.max_participants:
+            flash('This meal is fully booked', 'warning')
+            next_param = (request.form.get('next') or request.args.get('next') or '').lower()
+            if next_param == 'discuss':
+                return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+            py, pw, _ = p.date.isocalendar()
+            return redirect(url_for('main.calendar_view', year=py, week=pw))
         part = Participant(user_id=current_user.id, proposal_id=p.id)
         db.session.add(part)
         db.session.commit()
@@ -688,6 +716,12 @@ def propose_recipe_form():
 
     p = Proposal(date=d, recipe_id=int(recipe_id), proposer_id=current_user.id)
     p.start_time = st
+    try:
+        p.max_participants = int(request.form.get('max_participants')) if request.form.get('max_participants') else None
+    except (ValueError, TypeError):
+        p.max_participants = None
+    deadline_str = request.form.get('join_deadline')
+    p.join_deadline = datetime.fromisoformat(deadline_str) if deadline_str else None
     db.session.add(p)
     db.session.commit()
     flash('Proposal created', 'success')
@@ -1388,6 +1422,30 @@ def change_start_time(proposal_id):
     discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
     for u in notify_parts:
         send_web_push_to_user(u, subj, f'{current_user.username} changed the start time', url=discuss_url)
+    return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+
+
+@main.route('/proposal/<int:proposal_id>/update_seats_deadline', methods=['POST'])
+@login_required
+def update_seats_deadline(proposal_id):
+    p = Proposal.query.get_or_404(proposal_id)
+    # any participant or proposer/admin may adjust seats/deadline
+    is_participant = any(pa.user_id == current_user.id for pa in p.participants)
+    if not is_participant and p.proposer_id != current_user.id and not getattr(current_user, 'is_admin', False):
+        flash('Not allowed', 'warning')
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+    max_p_str = request.form.get('max_participants', '').strip()
+    try:
+        p.max_participants = int(max_p_str) if max_p_str else None
+    except ValueError:
+        p.max_participants = None
+    deadline_str = request.form.get('join_deadline', '').strip()
+    try:
+        p.join_deadline = datetime.fromisoformat(deadline_str) if deadline_str else None
+    except ValueError:
+        p.join_deadline = None
+    db.session.commit()
+    flash('Updated', 'success')
     return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
 
 

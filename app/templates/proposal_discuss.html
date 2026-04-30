@@ -129,7 +129,7 @@
 
   <div class="mb-3">
     <h6>Participants</h6>
-    <div class="d-flex gap-2 align-items-center">
+    <div class="d-flex gap-2 align-items-center flex-wrap">
       {% if proposal.participants|length == 0 %}
         <div class="text-muted">No participants yet</div>
       {% endif %}
@@ -144,6 +144,46 @@
         </div>
       {% endfor %}
     </div>
+
+    {# Seats & deadline info + edit form #}
+    {% set seats_left = (proposal.max_participants - proposal.participants|length) if proposal.max_participants is not none else none %}
+    {% set is_full = (proposal.max_participants is not none and proposal.participants|length >= proposal.max_participants) %}
+    <div class="mt-2 d-flex flex-wrap gap-2 align-items-center">
+      <span class="badge {% if is_full %}bg-danger{% else %}bg-secondary{% endif %}">
+        Seats: {{ proposal.participants|length }}{% if proposal.max_participants is not none %}/{{ proposal.max_participants }}{% if is_full %} — Full{% endif %}{% else %} / ∞{% endif %}
+      </span>
+      {% if proposal.join_deadline %}
+        <span class="badge bg-secondary">⏰ Deadline: {{ proposal.join_deadline.strftime('%d.%m.%Y %H:%M') }}</span>
+      {% endif %}
+      {% if current_user.is_authenticated and (joined or proposal.proposer_id == current_user.id or current_user.is_admin) %}
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="toggleSeatsEdit" title="Edit seats / deadline">
+          <i class="material-icons" style="font-size:15px;vertical-align:middle;">settings</i>
+        </button>
+      {% endif %}
+    </div>
+
+    {% if current_user.is_authenticated and (joined or proposal.proposer_id == current_user.id or current_user.is_admin) %}
+      <div id="seatsEditForm" class="mt-2 p-2 border rounded" style="display:none;max-width:420px;">
+        <form method="post" action="{{ url_for('main.update_seats_deadline', proposal_id=proposal.id) }}">
+          <div class="row g-2">
+            <div class="col-6">
+              <label class="form-label small">Max seats</label>
+              <input type="number" name="max_participants" class="form-control form-control-sm" min="1" placeholder="∞"
+                value="{{ proposal.max_participants if proposal.max_participants is not none else '' }}">
+            </div>
+            <div class="col-6">
+              <label class="form-label small">Join deadline</label>
+              <input type="datetime-local" name="join_deadline" class="form-control form-control-sm"
+                value="{{ proposal.join_deadline.strftime('%Y-%m-%dT%H:%M') if proposal.join_deadline else '' }}">
+            </div>
+          </div>
+          <div class="d-flex gap-2 mt-2">
+            <button class="btn btn-sm btn-primary">Save</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary" id="cancelSeatsEdit">Cancel</button>
+          </div>
+        </form>
+      </div>
+    {% endif %}
   </div>
 
   <p class="text-muted small mb-3">Here you can exchange details and coordinate for "{{ proposal.recipe.title }}" on {{ proposal.date.strftime('%Y-%m-%d') }}.</p>
@@ -191,6 +231,17 @@
     }
     if(cancelSmall){
       cancelSmall.addEventListener('click', function(){ if(formSmall) formSmall.style.display='none'; });
+    }
+
+    // seats/deadline edit toggle
+    var btnSeats = document.getElementById('toggleSeatsEdit');
+    var formSeats = document.getElementById('seatsEditForm');
+    var cancelSeats = document.getElementById('cancelSeatsEdit');
+    if(btnSeats){
+      btnSeats.addEventListener('click', function(){ formSeats.style.display = (formSeats.style.display==='none') ? 'block' : 'none'; });
+    }
+    if(cancelSeats){
+      cancelSeats.addEventListener('click', function(){ formSeats.style.display='none'; });
     }
   });
   </script>
