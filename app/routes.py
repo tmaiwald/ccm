@@ -1686,11 +1686,18 @@ def group_update_banner(group_id):
     if grp.creator_id != current_user.id and not getattr(current_user, 'is_admin', False):
         flash('Not allowed', 'warning')
         return redirect(url_for('main.group_detail', group_id=group_id))
-    newname = save_upload(request.files.get('banner'), current_user.username, max_size=(1600, 500))
-    if newname:
-        grp.banner_image = newname
+    changed = False
+    newbanner = save_upload(request.files.get('banner'), current_user.username, max_size=(1600, 500))
+    if newbanner:
+        grp.banner_image = newbanner
+        changed = True
+    newicon = save_upload(request.files.get('group_image'), current_user.username, max_size=(400, 400))
+    if newicon:
+        grp.group_image = newicon
+        changed = True
+    if changed:
         db.session.commit()
-        flash('Banner updated', 'success')
+        flash('Group images updated', 'success')
     else:
         flash('No valid image provided (max 20 MB)', 'warning')
     return redirect(url_for('main.group_detail', group_id=group_id))
