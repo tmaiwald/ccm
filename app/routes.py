@@ -680,7 +680,49 @@ def propose_recipe_form():
     if recipients:
         subj, text_body, html_body = make_proposal_mail(p, 'created a proposal', current_user.username)
         send_mail(subj, text_body, recipients, html_body)
-    return redirect(url_for('main.calendar_view', year=d.year, month=d.month))
+
+    # auto-join logic
+    if request.form.get('auto_join'):
+        my_proposals_today = Proposal.query.filter_by(date=d, proposer_id=current_user.id).all()
+        if len(my_proposals_today) == 1:
+            # only the new proposal — join it right away
+            part = Participant(user_id=current_user.id, proposal_id=p.id)
+            db.session.add(part)
+            db.session.commit()
+        else:
+            # multiple proposals for this day — let the user pick which one(s) to join
+            return redirect(url_for('main.select_join_for_date', date_str=date_str))
+
+    py, pw, _ = d.isocalendar()
+    return redirect(url_for('main.calendar_view', year=py, week=pw))
+
+
+@main.route('/proposal/select_join/<date_str>', methods=['GET', 'POST'])
+@login_required
+def select_join_for_date(date_str):
+    try:
+        d = date.fromisoformat(date_str)
+    except ValueError:
+        flash('Invalid date', 'warning')
+        return redirect(url_for('main.calendar_view'))
+    # proposals for this day created by the current user
+    proposals = Proposal.query.filter_by(date=d, proposer_id=current_user.id).order_by(Proposal.id.asc()).all()
+    if request.method == 'POST':
+        selected_ids = request.form.getlist('proposal_ids')
+        for pid in selected_ids:
+            try:
+                p = Proposal.query.get(int(pid))
+            except (ValueError, TypeError):
+                continue
+            if p and p.date == d and p.proposer_id == current_user.id:
+                if not any(pa.user_id == current_user.id for pa in p.participants):
+                    db.session.add(Participant(user_id=current_user.id, proposal_id=p.id))
+        db.session.commit()
+        flash('Joined selected proposal(s)', 'success')
+        py, pw, _ = d.isocalendar()
+        return redirect(url_for('main.calendar_view', year=py, week=pw))
+    py, pw, _ = d.isocalendar()
+    return render_template('select_join.html', proposals=proposals, the_date=d, year=py, week=pw)
 
 
 @main.route('/recipe/upload', methods=['POST'])

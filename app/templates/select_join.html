@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-12 col-md-6">
+    <h3 class="mb-1">Join a proposal</h3>
+    <p class="text-muted mb-3">You created multiple proposals for <strong>{{ the_date.strftime('%A, %d.%m.%Y') }}</strong>. Select which one(s) you want to join.</p>
+
+    <form method="post">
+      {% for p in proposals %}
+        {% set already_joined = p.participants|selectattr('user_id', 'equalto', current_user.id)|list %}
+        <div class="form-check card p-3 mb-2 {% if already_joined %}border-success{% endif %}">
+          <input class="form-check-input mt-2" type="checkbox" name="proposal_ids" value="{{ p.id }}" id="prop_{{ p.id }}"
+            {% if already_joined %}disabled checked{% endif %}>
+          <label class="form-check-label ms-2 w-100" for="prop_{{ p.id }}">
+            <div class="fw-bold">{{ p.recipe.title }}</div>
+            <div class="small text-muted">
+              {{ p.start_time.strftime('%H:%M') if p.start_time else '12:00' }}
+              &middot; {{ p.participants|length }} participant(s)
+              {% if already_joined %}<span class="badge bg-success ms-1">Already joined</span>{% endif %}
+            </div>
+          </label>
+        </div>
+      {% endfor %}
+
+      <div class="d-flex gap-2 mt-3">
+        <button type="submit" class="btn btn-primary">Confirm</button>
+        <a href="{{ url_for('main.calendar_view', year=year, week=week) }}" class="btn btn-outline-secondary">Skip</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
