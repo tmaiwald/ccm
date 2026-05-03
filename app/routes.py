@@ -2165,10 +2165,10 @@ def regular_meal_messages_poll(group_id, meal_id):
     return jsonify({'messages': result})
 
 
-@main.route('/groups/<int:group_id>/regular_meals/<int:meal_id>/instance/<date_str>')
+@main.route('/groups/<int:group_id>/regular_meals/<int:meal_id>/instance/<date_str>', methods=['GET', 'POST'])
 @login_required
 def regular_meal_goto_instance(group_id, meal_id, date_str):
-    """Go to (or create) a proposal for a specific date occurrence of a regular meal."""
+    """GET: confirmation page. POST: open/create proposal for that date."""
     rm = RegularMeal.query.get_or_404(meal_id)
     if rm.group_id != group_id:
         return redirect(url_for('main.regular_meal_detail', group_id=group_id, meal_id=meal_id))
@@ -2177,15 +2177,23 @@ def regular_meal_goto_instance(group_id, meal_id, date_str):
         target = _date.fromisoformat(date_str)
     except ValueError:
         return redirect(url_for('main.regular_meal_detail', group_id=group_id, meal_id=meal_id))
-    # find existing proposal for same date + recipe
-    p = Proposal.query.filter_by(date=target, recipe_id=rm.recipe_id).first()
-    if p is None:
+
+    # check if a proposal already exists for this date + recipe
+    existing = Proposal.query.filter_by(date=target, recipe_id=rm.recipe_id).first()
+
+    if request.method == 'POST':
+        if existing:
+            return redirect(url_for('main.proposal_discuss', proposal_id=existing.id))
         p = Proposal(date=target, recipe_id=rm.recipe_id, proposer_id=current_user.id,
                      start_time=rm.start_time)
         db.session.add(p)
         db.session.commit()
         flash('Meal proposed for this date!', 'success')
-    return redirect(url_for('main.proposal_discuss', proposal_id=p.id))
+        return redirect(url_for('main.proposal_discuss', proposal_id=p.id))
+
+    grp = Group.query.get_or_404(group_id)
+    return render_template('regular_meal_instance_confirm.html',
+                           rm=rm, group=grp, target=target, existing=existing)
 
 
 @main.route('/groups/<int:group_id>', methods=['GET', 'POST'])

@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center mt-4">
+  <div class="col-12 col-sm-8 col-md-6">
+    <div class="card">
+      <div class="card-body text-center py-4">
+
+        {# Recipe image #}
+        {% if rm.recipe.image %}
+          <img src="{{ url_for('static', filename='uploads/'~rm.recipe.image) }}"
+               class="rounded mb-3"
+               style="width:80px;height:80px;object-fit:cover;">
+        {% else %}
+          <span class="material-icons text-muted d-block mb-3" style="font-size:3rem;">restaurant</span>
+        {% endif %}
+
+        <h5 class="mb-1">{{ rm.recipe.title }}</h5>
+        <div class="text-muted small mb-3">
+          <span class="material-icons align-middle" style="font-size:14px;">groups</span>
+          {{ group.name }}
+        </div>
+
+        <div class="badge bg-info text-dark fs-6 px-3 py-2 mb-4">
+          {{ target.strftime('%A, %d %b %Y') }}
+        </div>
+
+        {% if existing %}
+          <p class="mb-4">A proposal for this meal already exists on this date. Do you want to open it?</p>
+          <div class="d-flex gap-3 justify-content-center">
+            <a href="{{ url_for('main.regular_meal_detail', group_id=group.id, meal_id=rm.id) }}"
+               class="btn btn-outline-secondary">Cancel</a>
+            <form method="post">
+              <button type="submit" class="btn btn-primary">Open proposal</button>
+            </form>
+          </div>
+        {% else %}
+          <p class="mb-4">This will create a new meal proposal for this date. Proceed?</p>
+          <div class="d-flex gap-3 justify-content-center">
+            <a href="{{ url_for('main.regular_meal_detail', group_id=group.id, meal_id=rm.id) }}"
+               class="btn btn-outline-secondary">Cancel</a>
+            <form method="post">
+              <button type="submit" class="btn btn-primary">Create proposal</button>
+            </form>
+          </div>
+        {% endif %}
+
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
