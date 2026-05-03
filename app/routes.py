@@ -2117,6 +2117,20 @@ def regular_meal_delete(group_id, meal_id):
     return redirect(url_for('main.group_detail', group_id=group_id))
 
 
+@main.route('/groups/<int:group_id>/regular_meals/<int:meal_id>')
+@login_required
+def regular_meal_detail(group_id, meal_id):
+    rm = RegularMeal.query.get_or_404(meal_id)
+    if rm.group_id != group_id:
+        return redirect(url_for('main.group_detail', group_id=group_id))
+    grp = Group.query.get_or_404(group_id)
+    membership = GroupMembership.query.filter_by(user_id=current_user.id, group_id=group_id).first()
+    upcoming = _upcoming_dates(rm, date.today(), count=8)
+    label = _regular_meal_label(rm)
+    return render_template('regular_meal_detail.html', rm=rm, group=grp,
+                           membership=membership, upcoming=upcoming, label=label)
+
+
 @main.route('/groups/<int:group_id>', methods=['GET', 'POST'])
 @login_required
 def group_detail(group_id):

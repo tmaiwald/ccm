@@ -106,6 +106,19 @@
 {# Spacer to clear the overflowing icon #}
 <div style="height:38px;"></div>
 
+{% block flash %}
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for category, message in messages %}
+      <div class="alert alert-{{ category }} alert-dismissible fade show" role="alert">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+      </div>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
+{% endblock %}
+
 {# ── Action buttons row ── #}
 <div class="d-flex justify-content-end align-items-center mb-3 flex-wrap gap-2">
   {% if membership %}
@@ -186,7 +199,8 @@
                     {% if not rm.active %}
                       <span class="badge bg-secondary">paused</span>
                     {% endif %}
-                    <span class="fw-semibold">{{ rm.recipe.title }}</span>
+                    <a href="{{ url_for('main.regular_meal_detail', group_id=group.id, meal_id=rm.id) }}"
+                       class="fw-semibold text-decoration-none">{{ rm.recipe.title }}</a>
                     <span class="text-muted small">
                       {% if rm.week_of_month == 0 %}
                         Every {{ ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'][rm.day_of_week] }}

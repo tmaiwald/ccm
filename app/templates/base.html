@@ -110,6 +110,7 @@
         <div class="alert alert-danger">Mail service not set up correctly</div>
       {% endif %}
 
+      {% block flash %}
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
           {% for category, message in messages %}
@@ -120,6 +121,7 @@
           {% endfor %}
         {% endif %}
       {% endwith %}
+      {% endblock %}
 
       {% block content %}{% endblock %}
     </div>

@@ -128,7 +128,7 @@
 
                 {% if current_user.is_authenticated %}
                   {% for rm in regular_meal_events.get(day.date, []) %}
-                    <a href="{{ url_for('main.group_detail', group_id=rm.group_id) }}"
+                    <a href="{{ url_for('main.regular_meal_detail', group_id=rm.group_id, meal_id=rm.id) }}"
                        class="d-block text-decoration-none mb-2">
                       <div class="p-2 border rounded border-info bg-info bg-opacity-10">
                         <div class="d-flex align-items-center gap-1">
