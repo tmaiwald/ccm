@@ -1,0 +1,14 @@
+{# Partial: single regular meal message card. Variables: m #}
+<div class="mb-3" id="message-{{ m.id }}">
+  <div class="border rounded p-2">
+    <div class="small text-muted mb-1">
+      {% if m.user.avatar %}
+        <img src="{{ url_for('static', filename='uploads/'~m.user.avatar) }}"
+             style="width:20px;height:20px;object-fit:cover;border-radius:4px;vertical-align:middle;margin-right:4px;">
+      {% endif %}
+      <a href="{{ url_for('main.profile', user_id=m.user_id) }}" class="text-decoration-none text-muted">{{ m.user.username }}</a>
+      &nbsp;·&nbsp; {{ m.created_at.strftime('%d/%m/%y %H:%M') }}
+    </div>
+    <div class="md-content">{{ m.content | markdown }}</div>
+  </div>
+</div>

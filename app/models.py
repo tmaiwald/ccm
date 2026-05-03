@@ -218,3 +218,16 @@ class RegularMeal(db.Model):
     recipe = db.relationship('Recipe', backref=db.backref('regular_meals', lazy=True))
     created_by = db.relationship('User', foreign_keys=[created_by_id],
                                  backref=db.backref('created_regular_meals', lazy=True))
+
+
+class RegularMealMessage(db.Model):
+    __tablename__ = 'regular_meal_message'
+    id = db.Column(db.Integer, primary_key=True)
+    regular_meal_id = db.Column(db.Integer, db.ForeignKey('regular_meal.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    user = db.relationship('User', backref=db.backref('regular_meal_messages', lazy=True))
+    regular_meal = db.relationship('RegularMeal',
+                                   backref=db.backref('messages', lazy=True, cascade='all, delete-orphan'))

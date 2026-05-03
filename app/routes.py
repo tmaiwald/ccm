@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory, jsonify
 from . import db
-from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal
+from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal, RegularMealMessage
 from flask_login import current_user, login_required
 from datetime import date, timedelta, time
 from calendar import monthrange
@@ -2117,7 +2117,7 @@ def regular_meal_delete(group_id, meal_id):
     return redirect(url_for('main.group_detail', group_id=group_id))
 
 
-@main.route('/groups/<int:group_id>/regular_meals/<int:meal_id>')
+@main.route('/groups/<int:group_id>/regular_meals/<int:meal_id>', methods=['GET', 'POST'])
 @login_required
 def regular_meal_detail(group_id, meal_id):
     rm = RegularMeal.query.get_or_404(meal_id)
@@ -2125,10 +2125,67 @@ def regular_meal_detail(group_id, meal_id):
         return redirect(url_for('main.group_detail', group_id=group_id))
     grp = Group.query.get_or_404(group_id)
     membership = GroupMembership.query.filter_by(user_id=current_user.id, group_id=group_id).first()
+
+    if request.method == 'POST':
+        if not membership:
+            flash('Join the group to post messages', 'warning')
+            return redirect(url_for('main.regular_meal_detail', group_id=group_id, meal_id=meal_id))
+        content = request.form.get('content', '').strip()
+        if content:
+            msg = RegularMealMessage(regular_meal_id=rm.id, user_id=current_user.id, content=content)
+            db.session.add(msg)
+            db.session.commit()
+        return redirect(url_for('main.regular_meal_detail', group_id=group_id, meal_id=meal_id))
+
+    messages = (RegularMealMessage.query
+                .filter_by(regular_meal_id=rm.id)
+                .order_by(RegularMealMessage.created_at.asc())
+                .all())
     upcoming = _upcoming_dates(rm, date.today(), count=8)
     label = _regular_meal_label(rm)
     return render_template('regular_meal_detail.html', rm=rm, group=grp,
-                           membership=membership, upcoming=upcoming, label=label)
+                           membership=membership, upcoming=upcoming, label=label,
+                           messages=messages)
+
+
+@main.route('/groups/<int:group_id>/regular_meals/<int:meal_id>/messages/poll')
+@login_required
+def regular_meal_messages_poll(group_id, meal_id):
+    rm = RegularMeal.query.get_or_404(meal_id)
+    after_id = request.args.get('after', 0, type=int)
+    msgs = (RegularMealMessage.query
+            .filter(RegularMealMessage.regular_meal_id == meal_id,
+                    RegularMealMessage.id > after_id)
+            .order_by(RegularMealMessage.created_at.asc())
+            .all())
+    result = []
+    for m in msgs:
+        html = render_template('regular_meal_message_card.html', m=m)
+        result.append({'id': m.id, 'html': html})
+    return jsonify({'messages': result})
+
+
+@main.route('/groups/<int:group_id>/regular_meals/<int:meal_id>/instance/<date_str>')
+@login_required
+def regular_meal_goto_instance(group_id, meal_id, date_str):
+    """Go to (or create) a proposal for a specific date occurrence of a regular meal."""
+    rm = RegularMeal.query.get_or_404(meal_id)
+    if rm.group_id != group_id:
+        return redirect(url_for('main.regular_meal_detail', group_id=group_id, meal_id=meal_id))
+    try:
+        from datetime import date as _date
+        target = _date.fromisoformat(date_str)
+    except ValueError:
+        return redirect(url_for('main.regular_meal_detail', group_id=group_id, meal_id=meal_id))
+    # find existing proposal for same date + recipe
+    p = Proposal.query.filter_by(date=target, recipe_id=rm.recipe_id).first()
+    if p is None:
+        p = Proposal(date=target, recipe_id=rm.recipe_id, proposer_id=current_user.id,
+                     start_time=rm.start_time)
+        db.session.add(p)
+        db.session.commit()
+        flash('Meal proposed for this date!', 'success')
+    return redirect(url_for('main.proposal_discuss', proposal_id=p.id))
 
 
 @main.route('/groups/<int:group_id>', methods=['GET', 'POST'])
@@ -2138,6 +2195,7 @@ def group_detail(group_id):
     membership = GroupMembership.query.filter_by(user_id=current_user.id, group_id=group_id).first()
 
     if request.method == 'POST':
+
         content = request.form.get('content', '').strip()
         if not membership:
             flash('Join the group to post messages', 'warning')
