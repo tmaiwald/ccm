@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory, jsonify
 from . import db
-from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal, RegularMealMessage
+from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal, RegularMealMessage, MealExpense, MealExpenseSplit
 from flask_login import current_user, login_required
 from datetime import date, timedelta, time
 from calendar import monthrange
@@ -185,6 +185,40 @@ def _notify_regular_meal(group, rm, actor, action='added'):
             f"</body></html>"
         )
         send_mail(mail_subject, text_body, mail_recipients, html_body)
+
+
+def _compute_settlement(expenses):
+    """Given a list of MealExpense objects, return a list of
+    {'from': user_obj, 'to': user_obj, 'amount': float} dicts
+    representing the minimum-transaction settlement."""
+    from collections import defaultdict
+    balances = defaultdict(float)  # user_id -> net balance (+ = owed, - = owes)
+    users = {}
+    for exp in expenses:
+        if not exp.splits:
+            continue
+        per_person = exp.amount / len(exp.splits)
+        balances[exp.paid_by_id] += exp.amount
+        users[exp.paid_by_id] = exp.paid_by
+        for s in exp.splits:
+            balances[s.user_id] -= per_person
+            users[s.user_id] = s.user
+    creditors = sorted([(uid, b) for uid, b in balances.items() if b > 0.005], key=lambda x: -x[1])
+    debtors   = sorted([(uid, -b) for uid, b in balances.items() if b < -0.005], key=lambda x: -x[1])
+    transactions = []
+    ci, di = 0, 0
+    while ci < len(creditors) and di < len(debtors):
+        cuid, camp = creditors[ci]
+        duid, damp = debtors[di]
+        transfer = min(camp, damp)
+        transactions.append({'from': users[duid], 'to': users[cuid], 'amount': round(transfer, 2)})
+        creditors[ci] = (cuid, camp - transfer)
+        debtors[di]   = (duid, damp - transfer)
+        if creditors[ci][1] < 0.005:
+            ci += 1
+        if debtors[di][1] < 0.005:
+            di += 1
+    return transactions
 
 
 # Serve PWA assets from the origin root so the service worker can control '/'
@@ -1273,10 +1307,13 @@ def proposal_discuss(proposal_id):
         my_reactions[msg.id] = r_mine
     joined = is_participant
     shopping_items = ShoppingItem.query.filter_by(proposal_id=p.id).order_by(ShoppingItem.created_at.asc()).all()
+    expenses = MealExpense.query.filter_by(proposal_id=p.id).order_by(MealExpense.created_at.asc()).all()
+    settlement = _compute_settlement(expenses)
     return render_template('proposal_discuss.html', proposal=p, messages=messages,
                            joined=joined, can_post=can_post,
                            reactions=reactions, my_reactions=my_reactions,
-                           shopping_items=shopping_items)
+                           shopping_items=shopping_items,
+                           expenses=expenses, settlement=settlement)
 
 
 @main.route('/proposal/<int:proposal_id>/messages/poll')
@@ -1325,6 +1362,57 @@ def proposal_react(proposal_id, message_id):
         db.session.add(MessageReaction(message_id=message_id, user_id=current_user.id, emoji=emoji))
     db.session.commit()
     return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id) + f'#message-{message_id}')
+
+
+@main.route('/proposal/<int:proposal_id>/expenses/add', methods=['POST'])
+@login_required
+def expense_add(proposal_id):
+    p = Proposal.query.get_or_404(proposal_id)
+    is_participant = any(pa.user_id == current_user.id for pa in p.participants)
+    can_add = is_participant or p.proposer_id == current_user.id or current_user.is_admin
+    if not can_add:
+        flash('You must be a participant to add expenses.', 'warning')
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+    desc = request.form.get('description', '').strip()
+    amount_str = request.form.get('amount', '').strip().replace(',', '.')
+    split_ids = request.form.getlist('split_users', type=int)
+    if not desc or not amount_str:
+        flash('Description and amount are required.', 'warning')
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+    try:
+        amount = float(amount_str)
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        flash('Invalid amount.', 'warning')
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+    # default: split among all current participants (+ proposer if not yet participating)
+    if not split_ids:
+        split_ids = [pa.user_id for pa in p.participants]
+        if p.proposer_id not in split_ids:
+            split_ids.append(p.proposer_id)
+    exp = MealExpense(proposal_id=p.id, paid_by_id=current_user.id, description=desc, amount=amount)
+    db.session.add(exp)
+    db.session.flush()
+    for uid in split_ids:
+        db.session.add(MealExpenseSplit(expense_id=exp.id, user_id=uid))
+    db.session.commit()
+    return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id) + '#billing')
+
+
+@main.route('/proposal/<int:proposal_id>/expenses/<int:expense_id>/delete', methods=['POST'])
+@login_required
+def expense_delete(proposal_id, expense_id):
+    exp = MealExpense.query.get_or_404(expense_id)
+    if exp.proposal_id != proposal_id:
+        abort(404)
+    p = Proposal.query.get_or_404(proposal_id)
+    if exp.paid_by_id != current_user.id and p.proposer_id != current_user.id and not current_user.is_admin:
+        flash('Not allowed.', 'warning')
+        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+    db.session.delete(exp)
+    db.session.commit()
+    return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id) + '#billing')
 
 
 # Admin mail config endpoints

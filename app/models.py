@@ -220,6 +220,31 @@ class RegularMeal(db.Model):
                                  backref=db.backref('created_regular_meals', lazy=True))
 
 
+class MealExpense(db.Model):
+    """An expense paid by one user for a meal proposal, split among selected participants."""
+    __tablename__ = 'meal_expense'
+    id = db.Column(db.Integer, primary_key=True)
+    proposal_id = db.Column(db.Integer, db.ForeignKey('proposal.id'), nullable=False)
+    paid_by_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    description = db.Column(db.String(200), nullable=False)
+    amount = db.Column(db.Float, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    proposal = db.relationship('Proposal', backref=db.backref('expenses', lazy=True, cascade='all, delete-orphan'))
+    paid_by = db.relationship('User', backref=db.backref('meal_expenses', lazy=True))
+    splits = db.relationship('MealExpenseSplit', backref='expense', cascade='all, delete-orphan', lazy=True)
+
+
+class MealExpenseSplit(db.Model):
+    """Which users share a given MealExpense (equal split)."""
+    __tablename__ = 'meal_expense_split'
+    id = db.Column(db.Integer, primary_key=True)
+    expense_id = db.Column(db.Integer, db.ForeignKey('meal_expense.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+
+    user = db.relationship('User', backref=db.backref('expense_splits', lazy=True))
+
+
 class RegularMealMessage(db.Model):
     __tablename__ = 'regular_meal_message'
     id = db.Column(db.Integer, primary_key=True)

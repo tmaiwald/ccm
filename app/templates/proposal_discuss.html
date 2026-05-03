@@ -266,6 +266,110 @@
     </div>
   </div>
 
+  {# ── Billing ── #}
+  {% set can_bill = current_user.is_authenticated and (joined or proposal.proposer_id == current_user.id or current_user.is_admin) %}
+  <div class="card mb-3" id="billing">
+    <div class="card-header d-flex align-items-center gap-2 py-2" role="button"
+         data-bs-toggle="collapse" data-bs-target="#billingCollapse"
+         aria-expanded="{{ 'true' if request.url.endswith('#billing') else 'false' }}"
+         style="cursor:pointer;user-select:none;">
+      <span class="material-icons text-warning" style="font-size:18px;">euro</span>
+      <span class="fw-semibold flex-grow-1">Billing</span>
+      {% if expenses %}
+        <span class="badge bg-secondary me-1">{{ expenses|length }} expense{{ 's' if expenses|length != 1 }}</span>
+        {% if settlement %}
+          <span class="badge bg-warning text-dark me-1">{{ settlement|length }} open</span>
+        {% else %}
+          <span class="badge bg-success me-1">Balanced</span>
+        {% endif %}
+      {% endif %}
+      <span class="material-icons text-muted" id="billChevron" style="font-size:18px;transition:transform .2s;">expand_more</span>
+    </div>
+
+    <div class="collapse" id="billingCollapse">
+      {% if expenses %}
+        <ul class="list-group list-group-flush">
+          {% for exp in expenses %}
+            <li class="list-group-item px-3 py-2">
+              <div class="d-flex align-items-center gap-2">
+                <span class="fw-semibold text-success flex-shrink-0" style="min-width:64px;">€&nbsp;{{ '%.2f'|format(exp.amount) }}</span>
+                <span class="flex-grow-1">
+                  {{ exp.description }}
+                  <span class="text-muted small ms-1">paid by <strong>{{ exp.paid_by.username }}</strong></span>
+                </span>
+                <span class="text-muted small flex-shrink-0"
+                      title="Split among: {% for s in exp.splits %}{{ s.user.username }}{% if not loop.last %}, {% endif %}{% endfor %}">
+                  ÷&thinsp;{{ exp.splits|length }}
+                </span>
+                {% if current_user.is_authenticated and (exp.paid_by_id == current_user.id or proposal.proposer_id == current_user.id or current_user.is_admin) %}
+                  <form method="post" action="{{ url_for('main.expense_delete', proposal_id=proposal.id, expense_id=exp.id) }}" class="flex-shrink-0 ms-1">
+                    <button class="btn btn-link text-danger p-0" style="line-height:1;" title="Delete expense">
+                      <span class="material-icons" style="font-size:16px;vertical-align:middle;">delete_outline</span>
+                    </button>
+                  </form>
+                {% endif %}
+              </div>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="px-3 py-3 text-muted small">No expenses yet{% if can_bill %} — add the first one below{% endif %}.</div>
+      {% endif %}
+
+      {% if settlement %}
+        <div class="px-3 py-2 border-top">
+          <div class="small fw-semibold text-muted mb-1">Settlement</div>
+          {% for t in settlement %}
+            <div class="small py-1">
+              <span class="badge bg-danger">{{ t.from.username }}</span>
+              <span class="text-muted mx-1">owes</span>
+              <span class="badge bg-success">{{ t.to.username }}</span>
+              <span class="ms-1 fw-semibold">€&nbsp;{{ '%.2f'|format(t.amount) }}</span>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      {% if can_bill %}
+        <div class="px-3 py-2 border-top bg-light">
+          <form method="post" action="{{ url_for('main.expense_add', proposal_id=proposal.id) }}"
+                class="d-flex gap-2 align-items-end flex-wrap">
+            <div>
+              <label class="form-label small mb-1">Description</label>
+              <input type="text" name="description" class="form-control form-control-sm"
+                     style="min-width:130px;" placeholder="e.g. Groceries"
+                     required maxlength="200" autocomplete="off">
+            </div>
+            <div>
+              <label class="form-label small mb-1">Amount (€)</label>
+              <input type="number" name="amount" class="form-control form-control-sm"
+                     style="max-width:95px;" placeholder="0.00" step="0.01" min="0.01" required>
+            </div>
+            <div>
+              <label class="form-label small mb-1">Split among</label>
+              <div class="d-flex gap-2 flex-wrap">
+                {% set bill_users = proposal.participants | map(attribute='user') | list %}
+                {% if proposal.proposer not in bill_users %}
+                  {% set bill_users = [proposal.proposer] + bill_users %}
+                {% endif %}
+                {% for u in bill_users %}
+                  <div class="form-check form-check-inline mb-0">
+                    <input class="form-check-input" type="checkbox" name="split_users"
+                           id="split_{{ u.id }}" value="{{ u.id }}" checked>
+                    <label class="form-check-label small" for="split_{{ u.id }}">{{ u.username }}</label>
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+            <button class="btn btn-sm btn-warning text-dark">
+              <span class="material-icons" style="font-size:15px;vertical-align:middle;">add</span> Add expense
+            </button>
+          </form>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
   <p class="text-muted small mb-3">Here you can exchange details and coordinate for "{{ proposal.recipe.title }}" on {{ proposal.date.strftime('%Y-%m-%d') }}.</p>
 
   <h6>Messages</h6>
@@ -437,6 +541,19 @@
     if (shoppingEl && shopChevron) {
       shoppingEl.addEventListener('show.bs.collapse', function(){ shopChevron.style.transform = 'rotate(180deg)'; });
       shoppingEl.addEventListener('hide.bs.collapse', function(){ shopChevron.style.transform = 'rotate(0deg)'; });
+    }
+
+    // Billing chevron flip + auto-open on #billing anchor
+    var billingEl  = document.getElementById('billingCollapse');
+    var billChevron = document.getElementById('billChevron');
+    if (billingEl && billChevron) {
+      billingEl.addEventListener('show.bs.collapse', function(){ billChevron.style.transform = 'rotate(180deg)'; });
+      billingEl.addEventListener('hide.bs.collapse', function(){ billChevron.style.transform = 'rotate(0deg)'; });
+    }
+    if (window.location.hash === '#billing' && billingEl) {
+      var bsCollapse = new bootstrap.Collapse(billingEl, { show: true });
+      if (billChevron) billChevron.style.transform = 'rotate(180deg)';
+      document.getElementById('billing').scrollIntoView({ behavior: 'smooth' });
     }
 
     var btn = document.getElementById('toggleTimeEdit');
