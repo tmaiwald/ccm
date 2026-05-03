@@ -29,27 +29,19 @@ UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'static', 'uploads')
 ALLOWED_EXT = {'png', 'jpg', 'jpeg', 'gif'}
 
 # ── Regular meal recurrence helpers ──────────────────────────────────────────
+# week_of_month encoding:
+#   0        = every week
+#  -2,-3,-4,-5 = every N weeks (N = abs(value)); anchor = first occurrence >= created_at
+#   1..4     = nth weekday of month
+#  -1        = last weekday of month
 import calendar as _cal_mod
 
-_WEEK_LABELS = {0: 'every', 1: 'first', 2: 'second', 3: 'third', 4: 'fourth', -1: 'last'}
-_DAY_LABELS  = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+_DAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
-def _nth_weekday(year, month, n, weekday):
-    """Return the date(s) of the n-th weekday (0=Mon..6=Sun) in year/month.
-    n=0  → returns ALL occurrences in that month (list).
-    n: 1..4 for 1st–4th occurrence, -1 for last. Returns None if it doesn't exist."""
+def _nth_weekday_in_month(year, month, n, weekday):
+    """n: 1..4 = nth occurrence, -1 = last. Returns date or None."""
     from datetime import timedelta as _td
-    if n == 0:
-        # all occurrences of that weekday in the month
-        first = date(year, month, 1)
-        delta = (weekday - first.weekday()) % 7
-        results = []
-        d = first + _td(days=delta)
-        while d.month == month:
-            results.append(d)
-            d += _td(days=7)
-        return results
-    elif n > 0:
+    if n > 0:
         first = date(year, month, 1)
         delta = (weekday - first.weekday()) % 7
         d = first + _td(days=delta + 7 * (n - 1))
@@ -60,31 +52,84 @@ def _nth_weekday(year, month, n, weekday):
         delta = (last.weekday() - weekday) % 7
         return last - _td(days=delta)
 
+def _interval_anchor(rm):
+    """For every-N-weeks meals, return the anchor date (first occurrence of day_of_week on/after created_at)."""
+    from datetime import timedelta as _td
+    base = rm.created_at.date() if rm.created_at else date.today()
+    delta = (rm.day_of_week - base.weekday()) % 7
+    return base + _td(days=delta)
+
+def _is_occurrence(rm, d):
+    """Return True if date d is an occurrence of RegularMeal rm."""
+    from datetime import timedelta as _td
+    if d.weekday() != rm.day_of_week:
+        return False
+    n = rm.week_of_month
+    if n == 0:
+        return True
+    elif n >= 1:
+        return _nth_weekday_in_month(d.year, d.month, n, rm.day_of_week) == d
+    elif n == -1:
+        return _nth_weekday_in_month(d.year, d.month, -1, rm.day_of_week) == d
+    else:
+        interval = abs(n)
+        anchor = _interval_anchor(rm)
+        if d < anchor:
+            return False
+        return (d - anchor).days % (interval * 7) == 0
+
 def _regular_meal_label(rm):
-    if rm.week_of_month == 0:
-        return f"Every {_DAY_LABELS[rm.day_of_week]}"
-    return f"Every {_WEEK_LABELS[rm.week_of_month]} {_DAY_LABELS[rm.day_of_week]}"
+    n = rm.week_of_month
+    day = _DAY_LABELS[rm.day_of_week]
+    if n == 0:
+        return f"Every {day}"
+    elif n == -2:
+        return f"Every 2nd week · {day}"
+    elif n == -3:
+        return f"Every 3rd week · {day}"
+    elif n == -4:
+        return f"Every 4th week · {day}"
+    elif n == -5:
+        return f"Every 5th week · {day}"
+    elif n == -1:
+        return f"Last {day} of the month"
+    else:
+        ordinals = {1: '1st', 2: '2nd', 3: '3rd', 4: '4th'}
+        return f"{ordinals[n]} {day} of the month"
 
 def _upcoming_dates(rm, from_date, count=6):
-    """Return the next `count` occurrence dates of a RegularMeal from from_date (inclusive)."""
+    """Return the next `count` occurrence dates of rm from from_date (inclusive)."""
+    from datetime import timedelta as _td
     results = []
-    year, month = from_date.year, from_date.month
-    for _ in range(count * 3 + 12):   # generous upper bound
-        if len(results) >= count:
-            break
-        occ = _nth_weekday(year, month, rm.week_of_month, rm.day_of_week)
-        if rm.week_of_month == 0:
-            # occ is a list
-            for d in occ:
-                if d >= from_date and len(results) < count:
-                    results.append(d)
-        else:
+    n = rm.week_of_month
+    if n == 0:
+        delta = (rm.day_of_week - from_date.weekday()) % 7
+        d = from_date + _td(days=delta)
+        while len(results) < count:
+            results.append(d)
+            d += _td(days=7)
+    elif n <= -2:
+        interval = abs(n)
+        anchor = _interval_anchor(rm)
+        if anchor < from_date:
+            weeks = ((from_date - anchor).days + interval * 7 - 1) // (interval * 7)
+            anchor = anchor + _td(days=weeks * interval * 7)
+        d = anchor
+        while len(results) < count:
+            results.append(d)
+            d += _td(days=interval * 7)
+    else:
+        year, month = from_date.year, from_date.month
+        for _ in range(count * 3 + 12):
+            if len(results) >= count:
+                break
+            occ = _nth_weekday_in_month(year, month, n, rm.day_of_week)
             if occ is not None and occ >= from_date:
                 results.append(occ)
-        month += 1
-        if month > 12:
-            month = 1
-            year += 1
+            month += 1
+            if month > 12:
+                month = 1
+                year += 1
     return results
 
 def _notify_regular_meal(group, rm, actor, action='added'):
@@ -105,7 +150,7 @@ def _notify_regular_meal(group, rm, actor, action='added'):
         mail_subject = f"[{group.name}] New regular meal: {recipe_title}"
         mail_intro = f"<strong>{actor.username}</strong> added a new regular meal to the group <strong>{group.name}</strong>:"
         text_intro = f"{actor.username} added a new regular meal to the group \"{group.name}\":"
-    else:  # changed / toggled
+    else:
         status = 'activated' if rm.active else 'paused'
         title = f"Regular meal {status} in {group.name}"
         push_body = f"{actor.username} {status} \"{recipe_title}\" — {label}"
@@ -596,14 +641,8 @@ def calendar_view():
             ).all()
             for rm in active_rms:
                 for d in days_list:
-                    occ = _nth_weekday(d.year, d.month, rm.week_of_month, rm.day_of_week)
-                    if rm.week_of_month == 0:
-                        # occ is a list of all occurrences in that month
-                        if d in occ:
-                            regular_meal_events.setdefault(d, []).append(rm)
-                    else:
-                        if occ == d:
-                            regular_meal_events.setdefault(d, []).append(rm)
+                    if _is_occurrence(rm, d):
+                        regular_meal_events.setdefault(d, []).append(rm)
 
     # compute all commitments for the current user (not limited to the week)
     commitments = []
@@ -2024,7 +2063,7 @@ def regular_meal_add(group_id):
     week_of_month = request.form.get('week_of_month', type=int)
     day_of_week = request.form.get('day_of_week', type=int)
     start_time_str = (request.form.get('start_time') or '').strip()
-    if not recipe_id or week_of_month not in (0, 1, 2, 3, 4, -1) or day_of_week not in range(7):
+    if not recipe_id or week_of_month not in (0, 1, 2, 3, 4, -1, -2, -3, -4, -5) or day_of_week not in range(7):
         flash('Invalid regular meal settings', 'warning')
         return redirect(url_for('main.group_detail', group_id=group_id))
     from datetime import time as _time
