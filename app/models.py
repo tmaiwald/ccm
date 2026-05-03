@@ -220,6 +220,21 @@ class RegularMeal(db.Model):
                                  backref=db.backref('created_regular_meals', lazy=True))
 
 
+class RecipeComment(db.Model):
+    """User comment on a recipe, supports markdown + latex. Can be edited by the author."""
+    __tablename__ = 'recipe_comment'
+    id = db.Column(db.Integer, primary_key=True)
+    recipe_id = db.Column(db.Integer, db.ForeignKey('recipe.id'), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    edited = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    recipe = db.relationship('Recipe', backref=db.backref('comments', lazy=True, cascade='all, delete-orphan'))
+    user = db.relationship('User', backref=db.backref('recipe_comments', lazy=True))
+
+
 class MealExpense(db.Model):
     """An expense paid by one user for a meal proposal, split among selected participants."""
     __tablename__ = 'meal_expense'

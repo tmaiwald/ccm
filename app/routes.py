@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory, jsonify
 from . import db
-from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal, RegularMealMessage, MealExpense, MealExpenseSplit
+from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal, RegularMealMessage, MealExpense, MealExpenseSplit, RecipeComment
 from flask_login import current_user, login_required
 from datetime import date, timedelta, time
 from calendar import monthrange
@@ -1812,7 +1812,47 @@ def delete_recipe(recipe_id):
 @login_required
 def recipe_detail(recipe_id):
     r = Recipe.query.get_or_404(recipe_id)
-    return render_template('recipe_detail.html', recipe=r)
+    comments = RecipeComment.query.filter_by(recipe_id=recipe_id).order_by(RecipeComment.created_at.asc()).all()
+    return render_template('recipe_detail.html', recipe=r, comments=comments)
+
+
+@main.route('/recipe/<int:recipe_id>/comments/add', methods=['POST'])
+@login_required
+def recipe_comment_add(recipe_id):
+    Recipe.query.get_or_404(recipe_id)
+    content = request.form.get('content', '').strip()
+    if not content:
+        return redirect(url_for('main.recipe_detail', recipe_id=recipe_id) + '#comments')
+    db.session.add(RecipeComment(recipe_id=recipe_id, user_id=current_user.id, content=content))
+    db.session.commit()
+    return redirect(url_for('main.recipe_detail', recipe_id=recipe_id) + '#comments')
+
+
+@main.route('/recipe/<int:recipe_id>/comments/<int:comment_id>/edit', methods=['POST'])
+@login_required
+def recipe_comment_edit(recipe_id, comment_id):
+    c = RecipeComment.query.get_or_404(comment_id)
+    if c.recipe_id != recipe_id or (c.user_id != current_user.id and not current_user.is_admin):
+        abort(403)
+    content = request.form.get('content', '').strip()
+    if content:
+        c.content = content
+        c.edited = True
+        from datetime import datetime as _dt
+        c.updated_at = _dt.utcnow()
+        db.session.commit()
+    return redirect(url_for('main.recipe_detail', recipe_id=recipe_id) + f'#comment-{comment_id}')
+
+
+@main.route('/recipe/<int:recipe_id>/comments/<int:comment_id>/delete', methods=['POST'])
+@login_required
+def recipe_comment_delete(recipe_id, comment_id):
+    c = RecipeComment.query.get_or_404(comment_id)
+    if c.recipe_id != recipe_id or (c.user_id != current_user.id and not current_user.is_admin):
+        abort(403)
+    db.session.delete(c)
+    db.session.commit()
+    return redirect(url_for('main.recipe_detail', recipe_id=recipe_id) + '#comments')
 
 
 @main.route('/users')

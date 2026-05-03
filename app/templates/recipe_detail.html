@@ -19,10 +19,10 @@
       </div>
 
       <h4>Ingredients</h4>
-      <pre>{{ recipe.ingredients }}</pre>
+      <div class="md-content">{{ recipe.ingredients | markdown }}</div>
 
-      <h4>Instructions</h4>
-      <pre>{{ recipe.instructions }}</pre>
+      <h4 class="mt-3">Instructions</h4>
+      <div class="md-content">{{ recipe.instructions | markdown }}</div>
 
     </div>
     <div class="col-md-4">
@@ -41,6 +41,80 @@
        </div>
      </div>
    </div>
+
+  {# ── Comments ── #}
+  <div class="mt-4" id="comments">
+    <h5 class="mb-3">
+      <span class="material-icons align-middle" style="font-size:20px;">comment</span>
+      Comments
+      {% if comments %}<span class="badge bg-secondary ms-1">{{ comments|length }}</span>{% endif %}
+    </h5>
+
+    {% if comments %}
+      {% for c in comments %}
+        <div class="border rounded p-3 mb-3" id="comment-{{ c.id }}">
+          <div class="small text-muted mb-2 d-flex align-items-center gap-2">
+            {% if c.user.avatar %}
+              <img src="{{ url_for('static', filename='uploads/'~c.user.avatar) }}"
+                   style="width:22px;height:22px;object-fit:cover;border-radius:4px;">
+            {% endif %}
+            <a href="{{ url_for('main.profile', user_id=c.user_id) }}" class="text-decoration-none text-muted fw-semibold">{{ c.user.username }}</a>
+            <span>·</span>
+            <span>{{ c.created_at.strftime('%d/%m/%y %H:%M') }}</span>
+            {% if c.edited %}
+              <span class="badge bg-light text-muted border" style="font-size:10px;">edited</span>
+            {% endif %}
+          </div>
+
+          {# View mode #}
+          <div class="md-content comment-view-{{ c.id }}">{{ c.content | markdown }}</div>
+
+          {# Edit form (hidden by default) #}
+          {% if current_user.is_authenticated and (c.user_id == current_user.id or current_user.is_admin) %}
+            <form method="post" action="{{ url_for('main.recipe_comment_edit', recipe_id=recipe.id, comment_id=c.id) }}"
+                  class="comment-edit-form-{{ c.id }} mt-2" style="display:none;">
+              <textarea name="content" class="form-control form-control-sm mb-2" rows="3">{{ c.content }}</textarea>
+              <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-primary">Save</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary"
+                        onclick="toggleCommentEdit({{ c.id }}, false)">Cancel</button>
+              </div>
+            </form>
+
+            <div class="d-flex gap-2 mt-2 comment-actions-{{ c.id }}">
+              <button class="btn btn-link btn-sm p-0 text-muted" style="font-size:12px;"
+                      onclick="toggleCommentEdit({{ c.id }}, true)">
+                <span class="material-icons" style="font-size:14px;vertical-align:middle;">edit</span> Edit
+              </button>
+              <form method="post" action="{{ url_for('main.recipe_comment_delete', recipe_id=recipe.id, comment_id=c.id) }}" class="d-inline">
+                <button class="btn btn-link btn-sm p-0 text-danger" style="font-size:12px;">
+                  <span class="material-icons" style="font-size:14px;vertical-align:middle;">delete_outline</span> Delete
+                </button>
+              </form>
+            </div>
+          {% endif %}
+        </div>
+      {% endfor %}
+    {% else %}
+      <p class="text-muted small">No comments yet — be the first!</p>
+    {% endif %}
+
+    {% if current_user.is_authenticated %}
+      <form method="post" action="{{ url_for('main.recipe_comment_add', recipe_id=recipe.id) }}" class="mt-2">
+        <textarea name="content" class="form-control mb-2" rows="3"
+                  placeholder="Write a comment… (Markdown + LaTeX supported)"></textarea>
+        <button class="btn btn-primary btn-sm">
+          <span class="material-icons" style="font-size:15px;vertical-align:middle;">send</span> Post comment
+        </button>
+      </form>
+    {% endif %}
+  </div>
+
+  {# KaTeX #}
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" crossorigin="anonymous"
+    onload="document.querySelectorAll('.md-content').forEach(function(el){renderMathInElement(el,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false},{left:'\\(',right:'\\)',display:false},{left:'\\[',right:'\\]',display:true}],ignoredTags:['script','noscript','style','textarea','pre','code'],throwOnError:false});});"></script>
 
   <script>
   const proposeUrl = "{{ url_for('main.propose_recipe_js') }}";
@@ -62,6 +136,16 @@
       }
     })
     .catch(()=> alert('Network error'));
+  }
+
+  function toggleCommentEdit(id, show) {
+    document.querySelector('.comment-view-'    + id).style.display   = show ? 'none'  : '';
+    document.querySelector('.comment-edit-form-' + id).style.display = show ? ''      : 'none';
+    document.querySelector('.comment-actions-'  + id).style.display  = show ? 'none'  : '';
+    if (show) {
+      var ta = document.querySelector('.comment-edit-form-' + id + ' textarea');
+      if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+    }
   }
   </script>
 {% endblock %}
