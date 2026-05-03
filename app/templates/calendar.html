@@ -121,7 +121,7 @@
                     <div class="small mt-1 d-flex flex-wrap gap-1 align-items-center">
                       <span>Joined: {{ p.participants|length }}{% if p.max_participants is not none %}/{{ p.max_participants }}{% endif %}</span>
                       {% if is_full %}<span class="badge bg-danger">Full</span>{% endif %}
-                      {% if p.join_deadline %}<span class="badge bg-secondary" title="Join by">⏰ {{ p.join_deadline.strftime('%d.%m %H:%M') }}</span>{% endif %}
+                      {% if p.join_deadline %}<span class="badge bg-secondary" title="Join by">⏰ {{ p.join_deadline.strftime('%d/%m/%y %H:%M') }}</span>{% endif %}
                     </div>
                   </div>
                 {% endfor %}
@@ -176,8 +176,8 @@
                 <label class="form-label">Max seats <small class="text-muted">(optional)</small></label>
                 <input type="number" name="max_participants" id="modalMaxSeats" class="form-control" min="1" placeholder="∞">
               </div>
-              <div class="col-6">
-                <div class="form-check mt-4 pt-1">
+              <div class="col-6 d-flex align-items-end pb-1">
+                <div class="form-check">
                   <input class="form-check-input" type="checkbox" id="modalDeadlineToggle">
                   <label class="form-check-label" for="modalDeadlineToggle">Set join deadline</label>
                 </div>

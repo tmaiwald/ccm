@@ -12,43 +12,51 @@
   <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">
     {% for g in groups %}
       <div class="col">
-        <div class="card h-100 overflow-hidden">
+        <a href="{{ url_for('main.group_detail', group_id=g.id) }}"
+           class="card h-100 overflow-hidden text-decoration-none text-reset position-relative d-block"
+           style="transition:box-shadow .15s;" onmouseenter="this.style.boxShadow='0 4px 16px rgba(0,0,0,.15)'" onmouseleave="this.style.boxShadow=''">
+
+          {# Banner #}
           {% if g.banner_image %}
             <img src="{{ url_for('static', filename='uploads/'~g.banner_image) }}"
-                 class="card-img-top" style="height:110px;object-fit:cover;">
+                 class="card-img-top" style="height:90px;object-fit:cover;">
           {% else %}
-            <div style="height:60px;background:linear-gradient(135deg,#0f2430 0%,#1a5070 100%);"></div>
+            <div style="height:90px;background:linear-gradient(135deg,#0f2430 0%,#1a5070 100%);"></div>
           {% endif %}
-          <div class="card-body pb-2">
-            <h5 class="card-title mb-1">{{ g.name }}</h5>
-            <div class="small text-muted mb-2">
-              <span class="material-icons" style="font-size:14px;vertical-align:middle;">person</span>
+
+          {# Group avatar overlapping the banner bottom #}
+          <div style="position:absolute;top:58px;left:14px;width:52px;height:52px;
+                      border-radius:50%;overflow:hidden;border:3px solid #fff;
+                      background:#e9ecef;box-shadow:0 2px 6px rgba(0,0,0,.2);z-index:1;">
+            {% if g.group_image %}
+              <img src="{{ url_for('static', filename='uploads/'~g.group_image) }}"
+                   style="width:100%;height:100%;object-fit:cover;">
+            {% else %}
+              <span class="material-icons" style="font-size:32px;line-height:46px;width:100%;text-align:center;color:#adb5bd;">group</span>
+            {% endif %}
+          </div>
+
+          <div class="card-body pb-2" style="padding-top:2rem;padding-left:78px;">
+            <h5 class="card-title mb-0 lh-sm">{{ g.name }}</h5>
+            <div class="small text-muted mt-1">
+              <span class="material-icons" style="font-size:13px;vertical-align:middle;">person</span>
               {{ g.memberships|length }} member{{ 's' if g.memberships|length != 1 }}
-              &ensp;·&ensp; Created by {{ g.creator.username }}
               {% if g.id in my_group_ids %}
-                <span class="badge bg-success ms-1">Joined</span>
+                &ensp;<span class="badge bg-success" style="font-size:10px;">Joined</span>
               {% endif %}
             </div>
           </div>
-          <div class="card-footer bg-transparent border-top-0 d-flex gap-2 pb-3">
-            <a href="{{ url_for('main.group_detail', group_id=g.id) }}" class="btn btn-sm btn-outline-primary">Open</a>
-            {% if g.id in my_group_ids %}
-              <form method="post" action="{{ url_for('main.group_leave', group_id=g.id) }}">
-                <button class="btn btn-sm btn-outline-secondary">Leave</button>
-              </form>
-            {% else %}
-              <form method="post" action="{{ url_for('main.group_join', group_id=g.id) }}">
-                <button class="btn btn-sm btn-primary">Join</button>
-              </form>
-            {% endif %}
-            {% if current_user.id == g.creator_id or current_user.is_admin %}
-              <form method="post" action="{{ url_for('main.group_delete', group_id=g.id) }}"
-                    onsubmit="return confirm('Delete group \'{{ g.name|replace("'","\\'")|e }}\' and all its messages?')" class="ms-auto">
-                <button class="btn btn-sm btn-outline-danger">Delete</button>
-              </form>
-            {% endif %}
+        </a>
+
+        {# Delete button outside the link so it doesn't navigate #}
+        {% if current_user.id == g.creator_id or current_user.is_admin %}
+          <div class="px-2 pb-2">
+            <form method="post" action="{{ url_for('main.group_delete', group_id=g.id) }}"
+                  onsubmit="return confirm('Delete group and all its messages?')">
+              <button class="btn btn-sm btn-outline-danger w-100">Delete</button>
+            </form>
           </div>
-        </div>
+        {% endif %}
       </div>
     {% endfor %}
   </div>

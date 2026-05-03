@@ -137,7 +137,7 @@
         Seats: {{ proposal.participants|length }}{% if proposal.max_participants is not none %}/{{ proposal.max_participants }}{% if is_full %} — Full{% endif %}{% else %} / ∞{% endif %}
       </span>
       {% if proposal.join_deadline %}
-        <span class="badge bg-secondary">⏰ Deadline: {{ proposal.join_deadline.strftime('%d.%m.%Y %H:%M') }}</span>
+        <span class="badge bg-secondary">⏰ Deadline: {{ proposal.join_deadline.strftime('%d/%m/%y %H:%M') }}</span>
       {% endif %}
       {% if current_user.is_authenticated and (joined or proposal.proposer_id == current_user.id or current_user.is_admin) %}
         <button type="button" class="btn btn-sm btn-outline-secondary" id="toggleSeatsEdit" title="Edit seats / deadline">
