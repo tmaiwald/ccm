@@ -195,3 +195,26 @@ class GroupMessageReaction(db.Model):
     user = db.relationship('User', backref=db.backref('group_reactions', lazy=True))
     message = db.relationship('GroupMessage', backref=db.backref('reactions', lazy=True, cascade='all, delete-orphan'))
     __table_args__ = (db.UniqueConstraint('message_id', 'user_id', 'emoji'),)
+
+
+class RegularMeal(db.Model):
+    """A recurring meal schedule tied to a group.
+
+    week_of_month: 1=first, 2=second, 3=third, 4=fourth, -1=last
+    day_of_week:   0=Monday … 6=Sunday  (Python weekday convention)
+    """
+    __tablename__ = 'regular_meal'
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey('ccm_group.id'), nullable=False)
+    recipe_id = db.Column(db.Integer, db.ForeignKey('recipe.id'), nullable=False)
+    week_of_month = db.Column(db.Integer, nullable=False)   # 1..4 or -1
+    day_of_week = db.Column(db.Integer, nullable=False)     # 0=Mon..6=Sun
+    start_time = db.Column(db.Time, nullable=True)
+    active = db.Column(db.Boolean, default=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    group = db.relationship('Group', backref=db.backref('regular_meals', lazy=True, cascade='all, delete-orphan'))
+    recipe = db.relationship('Recipe', backref=db.backref('regular_meals', lazy=True))
+    created_by = db.relationship('User', foreign_keys=[created_by_id],
+                                 backref=db.backref('created_regular_meals', lazy=True))

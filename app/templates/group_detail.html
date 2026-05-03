@@ -160,6 +160,122 @@
   {% endif %}
 </div>
 
+{# ── Regular Meals card ── #}
+<div class="card mb-3">
+  <div class="card-header d-flex align-items-center justify-content-between fw-semibold"
+       style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#regularMealsCollapse"
+       aria-expanded="false" aria-controls="regularMealsCollapse">
+    <span class="d-flex align-items-center gap-2">
+      <span class="material-icons" style="font-size:18px;">repeat</span>
+      Regular meals
+      {% if regular_meals %}
+        <span class="badge bg-secondary">{{ regular_meals|length }}</span>
+      {% endif %}
+    </span>
+    <span class="material-icons text-muted" style="font-size:18px;" id="regularMealsChevron">expand_more</span>
+  </div>
+  <div class="collapse" id="regularMealsCollapse">
+    <div class="card-body p-0">
+      {% if regular_meals %}
+        <ul class="list-group list-group-flush">
+          {% for rm in regular_meals %}
+            <li class="list-group-item {% if not rm.active %}opacity-50{% endif %}">
+              <div class="d-flex align-items-start justify-content-between gap-2">
+                <div>
+                  <div class="d-flex align-items-center gap-2 flex-wrap">
+                    {% if not rm.active %}
+                      <span class="badge bg-secondary">paused</span>
+                    {% endif %}
+                    <span class="fw-semibold">{{ rm.recipe.title }}</span>
+                    <span class="text-muted small">
+                      Every {{ ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'][rm.day_of_week] }}
+                      ({{ ['1st','2nd','3rd','4th','last'][[-1,1,2,3,4].index(rm.week_of_month)] if rm.week_of_month != -1 else 'last' }})
+                      {% if rm.start_time %}&middot; {{ rm.start_time.strftime('%H:%M') }}{% endif %}
+                    </span>
+                  </div>
+                  {% set upcoming = regular_meals_upcoming.get(rm.id, []) %}
+                  {% if upcoming %}
+                    <div class="mt-1 d-flex flex-wrap gap-1">
+                      {% for d in upcoming %}
+                        <span class="badge {% if rm.active %}bg-info text-dark{% else %}bg-secondary{% endif %}" style="font-size:.7rem;">{{ d.strftime('%d/%m/%y') }}</span>
+                      {% endfor %}
+                    </div>
+                  {% endif %}
+                </div>
+                {% if membership and (rm.created_by_id == current_user.id or group.creator_id == current_user.id or current_user.is_admin) %}
+                  <div class="d-flex gap-1 flex-shrink-0">
+                    <form method="post" action="{{ url_for('main.regular_meal_toggle', group_id=group.id, meal_id=rm.id) }}">
+                      <button type="submit" class="btn btn-sm btn-outline-secondary"
+                              title="{{ 'Pause' if rm.active else 'Activate' }}">
+                        <span class="material-icons" style="font-size:14px;">{{ 'pause' if rm.active else 'play_arrow' }}</span>
+                      </button>
+                    </form>
+                    <form method="post" action="{{ url_for('main.regular_meal_delete', group_id=group.id, meal_id=rm.id) }}"
+                          onsubmit="return confirm('Remove this regular meal?')">
+                      <button type="submit" class="btn btn-sm btn-outline-danger">
+                        <span class="material-icons" style="font-size:14px;">delete</span>
+                      </button>
+                    </form>
+                  </div>
+                {% endif %}
+              </div>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="text-muted small m-3">No regular meals yet.</p>
+      {% endif %}
+
+      {% if membership %}
+        <div class="border-top p-3">
+          <p class="fw-semibold small mb-2">Add regular meal</p>
+          <form method="post" action="{{ url_for('main.regular_meal_add', group_id=group.id) }}"
+                class="row g-2 align-items-end">
+            <div class="col-12 col-sm-5">
+              <label class="form-label form-label-sm mb-1">Recipe</label>
+              <select name="recipe_id" class="form-select form-select-sm" required>
+                <option value="" disabled selected>— choose recipe —</option>
+                {% for r in recipes_all %}
+                  <option value="{{ r.id }}">{{ r.title }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-6 col-sm-3">
+              <label class="form-label form-label-sm mb-1">Week</label>
+              <select name="week_of_month" class="form-select form-select-sm" required>
+                <option value="1">1st</option>
+                <option value="2">2nd</option>
+                <option value="3">3rd</option>
+                <option value="4">4th</option>
+                <option value="-1">Last</option>
+              </select>
+            </div>
+            <div class="col-6 col-sm-3">
+              <label class="form-label form-label-sm mb-1">Day</label>
+              <select name="day_of_week" class="form-select form-select-sm" required>
+                <option value="0">Monday</option>
+                <option value="1">Tuesday</option>
+                <option value="2">Wednesday</option>
+                <option value="3">Thursday</option>
+                <option value="4">Friday</option>
+                <option value="5">Saturday</option>
+                <option value="6">Sunday</option>
+              </select>
+            </div>
+            <div class="col-6 col-sm-2">
+              <label class="form-label form-label-sm mb-1">Time</label>
+              <input type="time" name="start_time" class="form-control form-control-sm">
+            </div>
+            <div class="col-6 col-sm-1 d-flex align-items-end">
+              <button type="submit" class="btn btn-sm btn-primary w-100">Add</button>
+            </div>
+          </form>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
 {# ── Two-column layout: members sidebar + messages main ── #}
 <div class="row g-3">
 
@@ -397,6 +513,12 @@ document.addEventListener('DOMContentLoaded', function () {
   if (mc && ch) {
     mc.addEventListener('show.bs.collapse', function () { ch.textContent = 'expand_less'; });
     mc.addEventListener('hide.bs.collapse', function () { ch.textContent = 'expand_more'; });
+  }
+  var rmc = document.getElementById('regularMealsCollapse');
+  var rmch = document.getElementById('regularMealsChevron');
+  if (rmc && rmch) {
+    rmc.addEventListener('show.bs.collapse', function () { rmch.textContent = 'expand_less'; });
+    rmc.addEventListener('hide.bs.collapse', function () { rmch.textContent = 'expand_more'; });
   }
 });
 

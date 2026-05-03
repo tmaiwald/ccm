@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory, jsonify
 from . import db
-from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem
+from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal
 from flask_login import current_user, login_required
 from datetime import date, timedelta, time
 from calendar import monthrange
@@ -27,6 +27,46 @@ main = Blueprint("main", __name__)
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'static', 'uploads')
 ALLOWED_EXT = {'png', 'jpg', 'jpeg', 'gif'}
+
+# ── Regular meal recurrence helpers ──────────────────────────────────────────
+import calendar as _cal_mod
+
+_WEEK_LABELS = {1: 'first', 2: 'second', 3: 'third', 4: 'fourth', -1: 'last'}
+_DAY_LABELS  = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+
+def _nth_weekday(year, month, n, weekday):
+    """Return the date of the n-th weekday (0=Mon..6=Sun) in year/month.
+    n: 1..4 for 1st–4th occurrence, -1 for last. Returns None if it doesn't exist."""
+    from datetime import timedelta as _td
+    if n > 0:
+        first = date(year, month, 1)
+        delta = (weekday - first.weekday()) % 7
+        d = first + _td(days=delta + 7 * (n - 1))
+        return d if d.month == month else None
+    else:  # last
+        last_day = _cal_mod.monthrange(year, month)[1]
+        last = date(year, month, last_day)
+        delta = (last.weekday() - weekday) % 7
+        return last - _td(days=delta)
+
+def _regular_meal_label(rm):
+    return f"Every {_WEEK_LABELS[rm.week_of_month]} {_DAY_LABELS[rm.day_of_week]}"
+
+def _upcoming_dates(rm, from_date, count=6):
+    """Return the next `count` occurrence dates of a RegularMeal from from_date (inclusive)."""
+    results = []
+    year, month = from_date.year, from_date.month
+    for _ in range(count * 3 + 12):   # generous upper bound
+        if len(results) >= count:
+            break
+        d = _nth_weekday(year, month, rm.week_of_month, rm.day_of_week)
+        if d is not None and d >= from_date:
+            results.append(d)
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+    return results
 
 
 # Serve PWA assets from the origin root so the service worker can control '/'
@@ -472,6 +512,21 @@ def calendar_view():
 
     recipes = Recipe.query.order_by(Recipe.created_at.desc()).all()
 
+    # regular meal occurrences this week (only for groups the user is a member of)
+    regular_meal_events = {}   # date -> list of RegularMeal
+    if current_user.is_authenticated:
+        member_group_ids = {m.group_id for m in GroupMembership.query.filter_by(user_id=current_user.id).all()}
+        if member_group_ids:
+            active_rms = RegularMeal.query.filter(
+                RegularMeal.group_id.in_(member_group_ids),
+                RegularMeal.active == True
+            ).all()
+            for rm in active_rms:
+                for d in days_list:
+                    occ = _nth_weekday(d.year, d.month, rm.week_of_month, rm.day_of_week)
+                    if occ == d:
+                        regular_meal_events.setdefault(d, []).append(rm)
+
     # compute all commitments for the current user (not limited to the week)
     commitments = []
     if current_user.is_authenticated:
@@ -499,7 +554,8 @@ def calendar_view():
                            prev_year=prev_year, prev_week=prev_week,
                            next_year=next_year, next_week=next_week,
                            today=today, commitments=commitments,
-                           my_claimed=my_claimed)
+                           my_claimed=my_claimed,
+                           regular_meal_events=regular_meal_events)
 
 
 def make_thumbnail(saved_path, thumb_size=(400, 300), bg_color=(255,255,255)):
@@ -1878,6 +1934,70 @@ def group_update_description(group_id):
     return redirect(url_for('main.group_detail', group_id=group_id))
 
 
+@main.route('/groups/<int:group_id>/regular_meals/add', methods=['POST'])
+@login_required
+def regular_meal_add(group_id):
+    grp = Group.query.get_or_404(group_id)
+    membership = GroupMembership.query.filter_by(user_id=current_user.id, group_id=group_id).first()
+    if not membership:
+        flash('Join the group first', 'warning')
+        return redirect(url_for('main.group_detail', group_id=group_id))
+    recipe_id = request.form.get('recipe_id', type=int)
+    week_of_month = request.form.get('week_of_month', type=int)
+    day_of_week = request.form.get('day_of_week', type=int)
+    start_time_str = (request.form.get('start_time') or '').strip()
+    if not recipe_id or week_of_month not in (1, 2, 3, 4, -1) or day_of_week not in range(7):
+        flash('Invalid regular meal settings', 'warning')
+        return redirect(url_for('main.group_detail', group_id=group_id))
+    from datetime import time as _time
+    start_time = None
+    if start_time_str:
+        try:
+            h, m = start_time_str.split(':')
+            start_time = _time(int(h), int(m))
+        except Exception:
+            pass
+    rm = RegularMeal(group_id=group_id, recipe_id=recipe_id,
+                     week_of_month=week_of_month, day_of_week=day_of_week,
+                     start_time=start_time, created_by_id=current_user.id)
+    db.session.add(rm)
+    db.session.commit()
+    flash('Regular meal added', 'success')
+    return redirect(url_for('main.group_detail', group_id=group_id))
+
+
+@main.route('/groups/<int:group_id>/regular_meals/<int:meal_id>/toggle', methods=['POST'])
+@login_required
+def regular_meal_toggle(group_id, meal_id):
+    rm = RegularMeal.query.get_or_404(meal_id)
+    if rm.group_id != group_id:
+        return redirect(url_for('main.group_detail', group_id=group_id))
+    membership = GroupMembership.query.filter_by(user_id=current_user.id, group_id=group_id).first()
+    grp = Group.query.get_or_404(group_id)
+    if not (membership and (rm.created_by_id == current_user.id or grp.creator_id == current_user.id or current_user.is_admin)):
+        flash('No permission', 'warning')
+        return redirect(url_for('main.group_detail', group_id=group_id))
+    rm.active = not rm.active
+    db.session.commit()
+    return redirect(url_for('main.group_detail', group_id=group_id))
+
+
+@main.route('/groups/<int:group_id>/regular_meals/<int:meal_id>/delete', methods=['POST'])
+@login_required
+def regular_meal_delete(group_id, meal_id):
+    rm = RegularMeal.query.get_or_404(meal_id)
+    if rm.group_id != group_id:
+        return redirect(url_for('main.group_detail', group_id=group_id))
+    grp = Group.query.get_or_404(group_id)
+    if not (rm.created_by_id == current_user.id or grp.creator_id == current_user.id or current_user.is_admin):
+        flash('No permission', 'warning')
+        return redirect(url_for('main.group_detail', group_id=group_id))
+    db.session.delete(rm)
+    db.session.commit()
+    flash('Regular meal removed', 'success')
+    return redirect(url_for('main.group_detail', group_id=group_id))
+
+
 @main.route('/groups/<int:group_id>', methods=['GET', 'POST'])
 @login_required
 def group_detail(group_id):
@@ -1919,8 +2039,16 @@ def group_detail(group_id):
             reactions[msg.id][r.emoji] = reactions[msg.id].get(r.emoji, 0) + 1
             if r.user_id == current_user.id:
                 my_reactions[msg.id].append(r.emoji)
+    # regular meals with upcoming dates
+    regular_meals = RegularMeal.query.filter_by(group_id=group_id).order_by(RegularMeal.created_at.asc()).all()
+    today = date.today()
+    regular_meals_upcoming = {rm.id: _upcoming_dates(rm, today, count=6) for rm in regular_meals}
+    recipes_all = Recipe.query.order_by(Recipe.title.asc()).all()
     return render_template('group_detail.html', group=grp, messages=messages, membership=membership,
-                           reactions=reactions, my_reactions=my_reactions)
+                           reactions=reactions, my_reactions=my_reactions,
+                           regular_meals=regular_meals,
+                           regular_meals_upcoming=regular_meals_upcoming,
+                           recipes_all=recipes_all)
 
 
 @main.route('/groups/<int:group_id>/notifications', methods=['POST'])
