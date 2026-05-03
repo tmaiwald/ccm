@@ -31,14 +31,25 @@ ALLOWED_EXT = {'png', 'jpg', 'jpeg', 'gif'}
 # ── Regular meal recurrence helpers ──────────────────────────────────────────
 import calendar as _cal_mod
 
-_WEEK_LABELS = {1: 'first', 2: 'second', 3: 'third', 4: 'fourth', -1: 'last'}
+_WEEK_LABELS = {0: 'every', 1: 'first', 2: 'second', 3: 'third', 4: 'fourth', -1: 'last'}
 _DAY_LABELS  = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
 def _nth_weekday(year, month, n, weekday):
-    """Return the date of the n-th weekday (0=Mon..6=Sun) in year/month.
+    """Return the date(s) of the n-th weekday (0=Mon..6=Sun) in year/month.
+    n=0  → returns ALL occurrences in that month (list).
     n: 1..4 for 1st–4th occurrence, -1 for last. Returns None if it doesn't exist."""
     from datetime import timedelta as _td
-    if n > 0:
+    if n == 0:
+        # all occurrences of that weekday in the month
+        first = date(year, month, 1)
+        delta = (weekday - first.weekday()) % 7
+        results = []
+        d = first + _td(days=delta)
+        while d.month == month:
+            results.append(d)
+            d += _td(days=7)
+        return results
+    elif n > 0:
         first = date(year, month, 1)
         delta = (weekday - first.weekday()) % 7
         d = first + _td(days=delta + 7 * (n - 1))
@@ -50,6 +61,8 @@ def _nth_weekday(year, month, n, weekday):
         return last - _td(days=delta)
 
 def _regular_meal_label(rm):
+    if rm.week_of_month == 0:
+        return f"Every {_DAY_LABELS[rm.day_of_week]}"
     return f"Every {_WEEK_LABELS[rm.week_of_month]} {_DAY_LABELS[rm.day_of_week]}"
 
 def _upcoming_dates(rm, from_date, count=6):
@@ -59,14 +72,74 @@ def _upcoming_dates(rm, from_date, count=6):
     for _ in range(count * 3 + 12):   # generous upper bound
         if len(results) >= count:
             break
-        d = _nth_weekday(year, month, rm.week_of_month, rm.day_of_week)
-        if d is not None and d >= from_date:
-            results.append(d)
+        occ = _nth_weekday(year, month, rm.week_of_month, rm.day_of_week)
+        if rm.week_of_month == 0:
+            # occ is a list
+            for d in occ:
+                if d >= from_date and len(results) < count:
+                    results.append(d)
+        else:
+            if occ is not None and occ >= from_date:
+                results.append(occ)
         month += 1
         if month > 12:
             month = 1
             year += 1
     return results
+
+def _notify_regular_meal(group, rm, actor, action='added'):
+    """Push + email notification to all group members when a regular meal is added/changed."""
+    cfg = MailConfig.query.first()
+    host = cfg.site_host.strip() if cfg and cfg.site_host else 'https://ccm-m.aiwald.de'
+    try:
+        group_url = url_for('main.group_detail', group_id=group.id)
+    except Exception:
+        group_url = f'/groups/{group.id}'
+    full_url = f"{host.rstrip('/')}{group_url}"
+
+    label = _regular_meal_label(rm)
+    recipe_title = rm.recipe.title if rm.recipe else '?'
+    if action == 'added':
+        title = f"New regular meal in {group.name}"
+        push_body = f"{actor.username} added \"{recipe_title}\" — {label}"
+        mail_subject = f"[{group.name}] New regular meal: {recipe_title}"
+        mail_intro = f"<strong>{actor.username}</strong> added a new regular meal to the group <strong>{group.name}</strong>:"
+        text_intro = f"{actor.username} added a new regular meal to the group \"{group.name}\":"
+    else:  # changed / toggled
+        status = 'activated' if rm.active else 'paused'
+        title = f"Regular meal {status} in {group.name}"
+        push_body = f"{actor.username} {status} \"{recipe_title}\" — {label}"
+        mail_subject = f"[{group.name}] Regular meal {status}: {recipe_title}"
+        mail_intro = f"<strong>{actor.username}</strong> {status} the regular meal <strong>{recipe_title}</strong> in <strong>{group.name}</strong>:"
+        text_intro = f"{actor.username} {status} the regular meal \"{recipe_title}\" in \"{group.name}\":"
+
+    detail_line = f"{recipe_title} · {label}"
+    if rm.start_time:
+        detail_line += f" · {rm.start_time.strftime('%H:%M')}"
+
+    mail_recipients = []
+    for membership in group.memberships:
+        if membership.user_id == actor.id:
+            continue
+        u = membership.user
+        if membership.notify_push:
+            send_web_push_to_user(u, title, push_body, url=group_url)
+        if membership.notify_mail and u.email:
+            mail_recipients.append(u.email)
+
+    if mail_recipients:
+        text_body = (
+            f"Hello,\n\n{text_intro}\n\n{detail_line}\n\n"
+            f"View the group: {full_url}\n\nBest regards,\nCleverly Connected Meals"
+        )
+        html_body = (
+            f"<html><body>"
+            f"<p>{mail_intro}</p>"
+            f"<p style='background:#f5f5f5;padding:0.7em 1em;border-radius:6px;'>{detail_line}</p>"
+            f"<p><a href='{full_url}'>Open group</a></p>"
+            f"</body></html>"
+        )
+        send_mail(mail_subject, text_body, mail_recipients, html_body)
 
 
 # Serve PWA assets from the origin root so the service worker can control '/'
@@ -524,8 +597,13 @@ def calendar_view():
             for rm in active_rms:
                 for d in days_list:
                     occ = _nth_weekday(d.year, d.month, rm.week_of_month, rm.day_of_week)
-                    if occ == d:
-                        regular_meal_events.setdefault(d, []).append(rm)
+                    if rm.week_of_month == 0:
+                        # occ is a list of all occurrences in that month
+                        if d in occ:
+                            regular_meal_events.setdefault(d, []).append(rm)
+                    else:
+                        if occ == d:
+                            regular_meal_events.setdefault(d, []).append(rm)
 
     # compute all commitments for the current user (not limited to the week)
     commitments = []
@@ -1946,7 +2024,7 @@ def regular_meal_add(group_id):
     week_of_month = request.form.get('week_of_month', type=int)
     day_of_week = request.form.get('day_of_week', type=int)
     start_time_str = (request.form.get('start_time') or '').strip()
-    if not recipe_id or week_of_month not in (1, 2, 3, 4, -1) or day_of_week not in range(7):
+    if not recipe_id or week_of_month not in (0, 1, 2, 3, 4, -1) or day_of_week not in range(7):
         flash('Invalid regular meal settings', 'warning')
         return redirect(url_for('main.group_detail', group_id=group_id))
     from datetime import time as _time
@@ -1962,6 +2040,7 @@ def regular_meal_add(group_id):
                      start_time=start_time, created_by_id=current_user.id)
     db.session.add(rm)
     db.session.commit()
+    _notify_regular_meal(grp, rm, current_user, action='added')
     flash('Regular meal added', 'success')
     return redirect(url_for('main.group_detail', group_id=group_id))
 
@@ -1979,6 +2058,7 @@ def regular_meal_toggle(group_id, meal_id):
         return redirect(url_for('main.group_detail', group_id=group_id))
     rm.active = not rm.active
     db.session.commit()
+    _notify_regular_meal(grp, rm, current_user, action='changed')
     return redirect(url_for('main.group_detail', group_id=group_id))
 
 
