@@ -514,7 +514,9 @@ def send_web_push_to_user(user, title: str, body: str, url: str = '/'):
                 subscription_info=sub_info,
                 data=payload,
                 vapid_private_key=private_key,
-                vapid_claims={'sub': vapid_email}
+                vapid_claims={'sub': vapid_email},
+                ttl=86400,
+                timeout=10
             )
             ok = True
         except WebPushException as e:

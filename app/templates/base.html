@@ -192,8 +192,20 @@
       await fetch("{{ url_for('main.push_subscribe') }}", {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subscription: subscription })
+        body: JSON.stringify({ subscription: subscription.toJSON() })
       });
+    }
+
+    let pushHealthCheckPending = false;
+
+    function schedulePushHealthCheck() {
+      if (pushHealthCheckPending || Notification.permission !== 'granted') return;
+      pushHealthCheckPending = true;
+      window.setTimeout(function() {
+        ensurePushSubscription()
+          .catch(function(e) { console.warn('Push resubscribe failed', e); })
+          .finally(function() { pushHealthCheckPending = false; });
+      }, 0);
     }
 
     async function requestPermissionAndSubscribe() {
@@ -223,6 +235,12 @@
         // If already granted, just ensure a subscription exists.
         if (Notification.permission === 'granted') {
           ensurePushSubscription().catch(function(e){ console.warn('Push subscription failed', e); });
+          document.addEventListener('visibilitychange', function() {
+            if (document.visibilityState === 'visible') {
+              schedulePushHealthCheck();
+            }
+          });
+          window.addEventListener('focus', schedulePushHealthCheck);
           return;
         }
 
