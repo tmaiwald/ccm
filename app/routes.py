@@ -922,7 +922,14 @@ def profile(user_id):
     # simple stats
     recipes = Recipe.query.filter_by(user_id=u.id).all()
     times_cooked = sum((r.times_cooked or 0) for r in recipes)
-    return render_template('profile.html', user=u, recipes=recipes, times_cooked=times_cooked)
+    push_subscription_count = len(getattr(u, 'push_subscriptions', []) or [])
+    return render_template(
+        'profile.html',
+        user=u,
+        recipes=recipes,
+        times_cooked=times_cooked,
+        push_subscription_count=push_subscription_count,
+    )
 
 
 @main.route('/profile/<int:user_id>/notifications', methods=['POST'])
@@ -939,6 +946,24 @@ def profile_update_notifications(user_id):
     u.notify_broadcast = bool(request.form.get('notify_broadcast'))
     db.session.commit()
     flash('Notification settings updated', 'success')
+    return redirect(url_for('main.profile', user_id=user_id))
+
+
+@main.route('/profile/<int:user_id>/push/reset', methods=['POST'])
+@login_required
+def profile_reset_push_subscriptions(user_id):
+    u = User.query.get_or_404(user_id)
+    if current_user.id != u.id and not getattr(current_user, 'is_admin', False):
+        flash('Not allowed', 'warning')
+        return redirect(url_for('main.profile', user_id=user_id))
+
+    removed = 0
+    for subscription in list(getattr(u, 'push_subscriptions', []) or []):
+        db.session.delete(subscription)
+        removed += 1
+    db.session.commit()
+
+    flash(f'Removed {removed} stored push subscription(s). Open the app on the device again to register a fresh push subscription.', 'success')
     return redirect(url_for('main.profile', user_id=user_id))
 
 

@@ -68,6 +68,91 @@
   {% if current_user.is_authenticated and current_user.id == user.id %}
   <div class="card mb-3">
     <div class="card-body">
+      <h6>Push notifications</h6>
+      <p class="small text-muted mb-2">Server-side stored subscriptions for this account: <strong>{{ push_subscription_count }}</strong></p>
+      <p class="small mb-2">Browser permission: <span id="pushPermissionStatus">checking...</span></p>
+      <p class="small mb-3">This device: <span id="pushDeviceStatus">checking...</span></p>
+      <div class="d-flex gap-2 flex-wrap">
+        <button type="button" class="btn btn-sm btn-outline-primary" id="repairPushBtn">Repair push on this device</button>
+        <form method="post" action="{{ url_for('main.profile_reset_push_subscriptions', user_id=user.id) }}">
+          <button class="btn btn-sm btn-outline-danger">Clear all stored push subscriptions</button>
+        </form>
+      </div>
+      <p class="small text-muted mt-3 mb-0">Use the device repair button on the phone or tablet that should receive notifications. If you changed devices several times, clear the stored subscriptions once and then reopen the app on each active device.</p>
+    </div>
+  </div>
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      const permissionStatus = document.getElementById('pushPermissionStatus');
+      const deviceStatus = document.getElementById('pushDeviceStatus');
+      const repairButton = document.getElementById('repairPushBtn');
+
+      async function refreshPushStatus() {
+        if (!permissionStatus || !deviceStatus) return;
+        if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+          permissionStatus.textContent = 'unsupported in this browser';
+          deviceStatus.textContent = 'service workers or notifications are unavailable';
+          if (repairButton) repairButton.disabled = true;
+          return;
+        }
+
+        permissionStatus.textContent = Notification.permission;
+        try {
+          const reg = await navigator.serviceWorker.ready;
+          const subscription = await reg.pushManager.getSubscription();
+          deviceStatus.textContent = subscription ? 'subscription present on this device' : 'no active subscription on this device';
+        } catch (error) {
+          deviceStatus.textContent = 'unable to inspect push state';
+        }
+      }
+
+      async function repairPushSubscription() {
+        if (!repairButton) return;
+        repairButton.disabled = true;
+        deviceStatus.textContent = 'repairing...';
+
+        try {
+          if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+            throw new Error('Push is not supported in this browser');
+          }
+
+          const reg = await navigator.serviceWorker.ready;
+          const existing = await reg.pushManager.getSubscription();
+          if (existing) {
+            try {
+              await fetch("{{ url_for('main.push_unsubscribe') }}", {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ endpoint: existing.endpoint })
+              });
+            } catch (error) {
+              console.warn('Server-side unsubscribe failed', error);
+            }
+            await existing.unsubscribe();
+          }
+
+          await requestPermissionAndSubscribe();
+          await refreshPushStatus();
+          deviceStatus.textContent = 'subscription repaired on this device';
+        } catch (error) {
+          console.warn('Push repair failed', error);
+          deviceStatus.textContent = error && error.message ? error.message : 'push repair failed';
+        } finally {
+          repairButton.disabled = false;
+        }
+      }
+
+      refreshPushStatus();
+      if (repairButton) {
+        repairButton.addEventListener('click', repairPushSubscription);
+      }
+    });
+  </script>
+  {% endif %}
+
+  {% if current_user.is_authenticated and current_user.id == user.id %}
+  <div class="card mb-3">
+    <div class="card-body">
       <h6>Account</h6>
       <form method="post" action="{{ url_for('main.profile_update_credentials', user_id=user.id) }}">
         <div class="mb-2">
