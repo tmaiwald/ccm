@@ -27,6 +27,7 @@ main = Blueprint("main", __name__)
 
 UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), 'static', 'uploads')
 ALLOWED_EXT = {'png', 'jpg', 'jpeg', 'gif'}
+SHARED_CART_TEMPLATE_TITLE = 'Shared Kart'
 
 # ── Regular meal recurrence helpers ──────────────────────────────────────────
 # week_of_month encoding:
@@ -593,13 +594,39 @@ def notify_admins_about_new_user(new_user, created_by=None):
     return push_ok or mail_ok
 
 
+def get_or_create_shared_cart_recipe():
+    recipe = Recipe.query.filter_by(title=SHARED_CART_TEMPLATE_TITLE, user_id=None).first()
+    if recipe:
+        return recipe
+
+    recipe = Recipe(
+        title=SHARED_CART_TEMPLATE_TITLE,
+        ingredients='Shared shopping list for a collaborative cart.',
+        instructions='Use this special proposal type to coordinate a shared cart, claims, and billing.',
+        user_id=None,
+    )
+    db.session.add(recipe)
+    db.session.commit()
+    return recipe
+
+
+def proposal_subject_label(proposal):
+    return proposal.display_title or (proposal.recipe.title if proposal.recipe else SHARED_CART_TEMPLATE_TITLE)
+
+
+def proposal_action_label(proposal):
+    return 'shared cart' if proposal.is_shared_cart else 'meal proposal'
+
+
 # helper to create nicer subjects and bodies for proposal-related mails
 def make_proposal_mail(proposal, action, actor, extra_text=None):
     """Return (subject, text_body, html_body).
     HTML is rendered from a template with full context.
     """
     short_date = proposal.date.strftime('%d.%m')
-    subject = f"{actor} {action} | {proposal.recipe.title} | {short_date}"
+    proposal_label = proposal_subject_label(proposal)
+    proposal_kind = proposal_action_label(proposal)
+    subject = f"{actor} {action} | {proposal_label} | {short_date}"
 
     try:
         discussion_path = url_for('main.proposal_discuss', proposal_id=proposal.id)
@@ -609,7 +636,7 @@ def make_proposal_mail(proposal, action, actor, extra_text=None):
     host = cfg.site_host.strip() if cfg and cfg.site_host else 'https://ccm-m.aiwald.de'
     discussion_url = f"{host.rstrip('/')}" + discussion_path
 
-    text_lines = [f"Hello,", "", f"{actor} {action} for the meal \"{proposal.recipe.title}\" on {short_date}."]
+    text_lines = [f"Hello,", "", f"{actor} {action} for the {proposal_kind} \"{proposal_label}\" on {short_date}."]
     if extra_text:
         text_lines.extend(["", extra_text])
     text_lines.extend(["", f"View the discussion and details here: {discussion_url}", "", "Best regards,", "Cleverly Connected Meals (CCM)"])
@@ -617,7 +644,7 @@ def make_proposal_mail(proposal, action, actor, extra_text=None):
 
     # render HTML template for nicer emails
     try:
-        html_body = render_template('email/proposal_email.html', subject=subject, actor=actor, action=action, proposal_title=proposal.recipe.title, short_date=short_date, extra_text=extra_text, discussion_url=discussion_url, host=host)
+        html_body = render_template('email/proposal_email.html', subject=subject, actor=actor, action=action, proposal_title=proposal_label, short_date=short_date, extra_text=extra_text, discussion_url=discussion_url, host=host)
     except Exception:
         # fallback to simple HTML
         html_p = ''.join(f"<p>{line}</p>" for line in text_lines if line)
@@ -724,7 +751,7 @@ def calendar_view():
     prev_year, prev_week, _ = prev_start.isocalendar()
     next_year, next_week, _ = next_start.isocalendar()
 
-    recipes = Recipe.query.order_by(Recipe.created_at.desc()).all()
+    recipes = Recipe.query.filter(Recipe.title != SHARED_CART_TEMPLATE_TITLE).order_by(Recipe.created_at.desc()).all()
 
     # regular meal occurrences this week (only for groups the user is a member of)
     regular_meal_events = {}   # date -> list of RegularMeal
@@ -768,7 +795,8 @@ def calendar_view():
                            next_year=next_year, next_week=next_week,
                            today=today, commitments=commitments,
                            my_claimed=my_claimed,
-                           regular_meal_events=regular_meal_events)
+                           regular_meal_events=regular_meal_events,
+                           can_create_shared_cart=current_user.has_beta_access)
 
 
 def make_thumbnail(saved_path, thumb_size=(400, 300), bg_color=(255,255,255)):
@@ -1053,7 +1081,7 @@ def propose_recipe_form():
         flash('Invalid date', 'warning')
         return redirect(url_for('main.recipes_list'))
 
-    p = Proposal(date=d, recipe_id=int(recipe_id), proposer_id=current_user.id)
+    p = Proposal(date=d, recipe_id=int(recipe_id), proposer_id=current_user.id, proposal_type='meal')
     p.start_time = st
     try:
         p.max_participants = int(request.form.get('max_participants')) if request.form.get('max_participants') else None
@@ -1064,7 +1092,7 @@ def propose_recipe_form():
     p.join_deadline = datetime.fromisoformat(deadline_str) if deadline_str else None
     db.session.add(p)
     db.session.commit()
-    flash('Proposal created', 'success')
+    flash('Meal proposal created', 'success')
     # notify users who opted into new-proposal emails/push (exclude proposer)
     notify_users = User.query.filter(User.id != current_user.id, User.notify_new_proposal == True).all()
     recipients = [u.email for u in notify_users if u.email]
@@ -1073,7 +1101,7 @@ def propose_recipe_form():
         send_mail(subj, text_body, recipients, html_body)
     discuss_url = url_for('main.proposal_discuss', proposal_id=p.id)
     for u in notify_users:
-        send_web_push_to_user(u, subj, f'{current_user.username} created a new meal proposal', url=discuss_url)
+        send_web_push_to_user(u, subj, f'{current_user.username} created a new {proposal_action_label(p)}', url=discuss_url)
 
     # auto-join logic
     if request.form.get('auto_join'):
@@ -1089,6 +1117,62 @@ def propose_recipe_form():
 
     py, pw, _ = d.isocalendar()
     return redirect(url_for('main.calendar_view', year=py, week=pw))
+
+
+@main.route('/proposal/shared_cart', methods=['POST'])
+@login_required
+def create_shared_cart():
+    if not current_user.has_beta_access:
+        flash('Shared carts are currently available for beta test users only.', 'warning')
+        return redirect(url_for('main.calendar_view'))
+
+    date_str = request.form.get('date')
+    start_time_str = request.form.get('start_time')
+    title = (request.form.get('title') or SHARED_CART_TEMPLATE_TITLE).strip()[:150]
+    st = None
+    if start_time_str:
+        try:
+            hh, mm = start_time_str.split(':')
+            st = time(int(hh), int(mm))
+        except Exception:
+            st = None
+
+    if not date_str:
+        flash('Date required', 'warning')
+        return redirect(url_for('main.calendar_view'))
+    try:
+        d = date.fromisoformat(date_str)
+    except ValueError:
+        flash('Invalid date', 'warning')
+        return redirect(url_for('main.calendar_view'))
+
+    recipe = get_or_create_shared_cart_recipe()
+    p = Proposal(
+        date=d,
+        recipe_id=recipe.id,
+        proposer_id=current_user.id,
+        proposal_type='shared_cart',
+        title=title or SHARED_CART_TEMPLATE_TITLE,
+    )
+    p.start_time = st
+    db.session.add(p)
+    db.session.commit()
+    flash('Shared cart created', 'success')
+
+    notify_users = User.query.filter(User.id != current_user.id, User.notify_new_proposal == True).all()
+    recipients = [u.email for u in notify_users if u.email]
+    subj, text_body, html_body = make_proposal_mail(p, 'created a proposal', current_user.username)
+    if recipients:
+        send_mail(subj, text_body, recipients, html_body)
+    discuss_url = url_for('main.proposal_discuss', proposal_id=p.id)
+    for u in notify_users:
+        send_web_push_to_user(u, subj, f'{current_user.username} created a new shared cart', url=discuss_url)
+
+    if request.form.get('auto_join'):
+        db.session.add(Participant(user_id=current_user.id, proposal_id=p.id))
+        db.session.commit()
+
+    return redirect(url_for('main.proposal_discuss', proposal_id=p.id))
 
 
 @main.route('/proposal/select_join/<date_str>', methods=['GET', 'POST'])
@@ -1203,19 +1287,18 @@ def delete_proposal(proposal_id):
         flash('Not allowed', 'warning')
         return redirect(url_for('main.calendar_view'))
     # prepare info before deletion
-    title = p.recipe.title
     pdate = p.date
     notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id]
     recipients = [u.email for u in notify_parts if u.email]
     db.session.delete(p)
     db.session.commit()
-    flash('Proposal removed', 'success')
+    flash(f'{proposal_subject_label(p)} removed', 'success')
     subj, text_body, html_body = make_proposal_mail(p, 'removed the proposal', current_user.username, extra_text=f'The proposal was removed by {current_user.username}.')
     if recipients:
         send_mail(subj, text_body, recipients, html_body)
     discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
     for u in notify_parts:
-        send_web_push_to_user(u, subj, f'{current_user.username} removed the proposal', url=discuss_url)
+        send_web_push_to_user(u, subj, f'{current_user.username} removed the {proposal_action_label(p)}', url=discuss_url)
     return redirect(url_for('main.calendar_view', year=pdate.year, month=pdate.month))
 
 
@@ -1790,6 +1873,7 @@ def admin_update_notifications(user_id):
     u.notify_new_proposal = bool(request.form.get('notify_new_proposal'))
     u.notify_discussion = bool(request.form.get('notify_discussion'))
     u.notify_broadcast = bool(request.form.get('notify_broadcast'))
+    u.is_beta_tester = bool(request.form.get('is_beta_tester')) or u.is_admin
     db.session.commit()
 
     # send notifications about email change
@@ -1819,6 +1903,7 @@ def admin_create_user():
     email = request.form.get('email','').strip()
     password = request.form.get('password','')
     is_admin = bool(request.form.get('is_admin'))
+    is_beta_tester = bool(request.form.get('is_beta_tester'))
     if not username or not password:
         flash('Username and password required', 'warning')
         return redirect(url_for('main.admin_dashboard'))
@@ -1828,7 +1913,7 @@ def admin_create_user():
     if email and is_email_domain_blacklisted(email):
         flash('That email domain is blacklisted for login', 'warning')
         return redirect(url_for('main.admin_dashboard'))
-    u = User(username=username, email=email, is_admin=is_admin)
+    u = User(username=username, email=email, is_admin=is_admin, is_beta_tester=(is_beta_tester or is_admin))
     u.set_password(password)
     db.session.add(u)
     db.session.commit()
@@ -1843,6 +1928,8 @@ def admin_create_user():
 def admin_toggle_admin(user_id):
     u = User.query.get_or_404(user_id)
     u.is_admin = not bool(u.is_admin)
+    if u.is_admin:
+        u.is_beta_tester = True
     db.session.commit()
     flash('Toggled admin', 'success')
     return redirect(url_for('main.admin_dashboard'))

@@ -41,6 +41,7 @@
     <div class="col-auto"><input name="email" class="form-control" placeholder="email"></div>
     <div class="col-auto"><input name="password" type="password" class="form-control" placeholder="password" required></div>
     <div class="col-auto d-flex align-items-center"><label class="form-check-label me-2">Admin</label><input type="checkbox" name="is_admin"></div>
+    <div class="col-auto d-flex align-items-center"><label class="form-check-label me-2">Beta</label><input type="checkbox" name="is_beta_tester"></div>
     <div class="col-auto"><button class="btn btn-primary">Create</button></div>
   </form>
 
@@ -89,18 +90,19 @@
 
   <h4>Users</h4>
   <table class="table">
-    <thead><tr><th>id</th><th>username</th><th>email</th><th>admin</th><th>admin notifications</th><th>actions</th></tr></thead>
+    <thead><tr><th>id</th><th>username</th><th>email</th><th>admin</th><th>beta</th><th>admin notifications</th><th>actions</th></tr></thead>
     <tbody>
       {% for u in users %}
         <tr>
           <td>{{ u.id }}</td>
           <td>{{ u.username }}</td>
           <td>
-            <form method="post" action="{{ url_for('main.admin_update_notifications', user_id=u.id) }}" style="display:flex;align-items:center;gap:8px;">
+            <form id="user-row-{{ u.id }}" method="post" action="{{ url_for('main.admin_update_notifications', user_id=u.id) }}" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
               <input name="email" value="{{ u.email or '' }}" class="form-control form-control-sm" style="width:220px;">
               <input type="hidden" name="notify_new_proposal" value="0">
               <input type="hidden" name="notify_discussion" value="0">
               <input type="hidden" name="notify_broadcast" value="0">
+              <input type="hidden" name="is_beta_tester" value="0">
 
               <div class="form-check form-check-inline mb-0">
                 <input class="form-check-input" type="checkbox" id="notify_new_{{ u.id }}" name="notify_new_proposal" value="1" {% if u.notify_new_proposal %}checked{% endif %}>
@@ -119,6 +121,16 @@
             </form>
           </td>
           <td>{{ 'yes' if u.is_admin else 'no' }}</td>
+          <td>
+            {% if u.is_admin %}
+              <span class="badge bg-primary">Included via admin</span>
+            {% else %}
+              <div class="form-check form-check-inline mb-0">
+                <input class="form-check-input" type="checkbox" id="beta_user_{{ u.id }}" name="is_beta_tester" value="1" form="user-row-{{ u.id }}" {% if u.is_beta_tester %}checked{% endif %}>
+                <label class="form-check-label small" for="beta_user_{{ u.id }}">Beta access</label>
+              </div>
+            {% endif %}
+          </td>
           <td>
             {% if u.is_admin %}
               <form method="post" action="{{ url_for('main.admin_update_admin_notifications', user_id=u.id) }}" style="display:flex;align-items:center;gap:8px;">

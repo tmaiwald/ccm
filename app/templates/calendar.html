@@ -22,7 +22,12 @@
               </div>
             </div>
             <div class="card-body p-2">
-              <h6 class="card-title mb-1"><a href="{{ url_for('main.proposal_discuss', proposal_id=p.id) }}">{{ p.recipe.title }}</a></h6>
+              <h6 class="card-title mb-1 d-flex align-items-center gap-2 flex-wrap">
+                <a href="{{ url_for('main.proposal_discuss', proposal_id=p.id) }}">{{ p.display_title }}</a>
+                {% if p.is_shared_cart %}
+                  <span class="badge shared-cart-badge">Shared Kart</span>
+                {% endif %}
+              </h6>
               <div class="small text-muted mb-2">by {{ p.proposer.username }}</div>
               <div class="d-flex justify-content-between align-items-center">
                 <div class="small text-muted">Participants: {{ p.participants|length }}</div>
@@ -87,7 +92,10 @@
                     <a class="stretched-link" href="{{ url_for('main.proposal_discuss', proposal_id=p.id) }}" aria-hidden="true"></a>
                     <div class="d-flex justify-content-between align-items-start">
                       <div>
-                        <strong class="d-block">{{ p.recipe.title }}</strong>
+                        <strong class="d-block">{{ p.display_title }}</strong>
+                        {% if p.is_shared_cart %}
+                          <span class="badge shared-cart-badge mt-1">Shared Kart</span>
+                        {% endif %}
                         <small class="text-muted">by {{ p.proposer.username }} · {{ p.start_time.strftime('%H:%M') if p.start_time else '12:00' }}</small>
                       </div>
                       <div class="text-end">
@@ -143,10 +151,24 @@
 
                 {% if current_user.is_authenticated %}
                   <div class="mb-2 d-flex justify-content-end align-items-center">
-                    <div class="d-flex align-items-center">
-                      <button type="button" class="propose-btn" onclick="openProposeModal('{{ day.date.isoformat() }}')" title="Propose meal" aria-label="Propose meal">+</button>
+                    <div class="fab-stack" data-date="{{ day.date.isoformat() }}">
+                      {% if can_create_shared_cart %}
+                        <div class="fab-options" aria-hidden="true">
+                          <button type="button" class="fab-option-btn" onclick="openProposeModal('{{ day.date.isoformat() }}')">
+                            <span class="material-icons">restaurant</span>
+                            <span>Meal proposal</span>
+                          </button>
+                          <button type="button" class="fab-option-btn fab-option-cart" onclick="openSharedCartModal('{{ day.date.isoformat() }}')">
+                            <span class="material-icons">shopping_cart</span>
+                            <span>Shared Kart</span>
+                          </button>
+                        </div>
+                        <button type="button" class="propose-btn fab-toggle" onclick="toggleCreateFab(this)" title="Create proposal" aria-label="Create proposal" aria-expanded="false">+</button>
+                      {% else %}
+                        <button type="button" class="propose-btn" onclick="openProposeModal('{{ day.date.isoformat() }}')" title="Propose meal" aria-label="Propose meal">+</button>
+                      {% endif %}
                       {% if day.proposals|length == 0 %}
-                        <small class="propose-hint ms-2 d-none d-md-inline">Propose a meal for this day</small>
+                        <small class="propose-hint ms-2 d-none d-md-inline">{% if can_create_shared_cart %}Add a meal or a Shared Kart{% else %}Propose a meal for this day{% endif %}</small>
                       {% endif %}
                     </div>
                   </div>
@@ -216,8 +238,71 @@
     </div>
   </div>
 
+  <div class="modal fade" id="sharedCartModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content shared-cart-modal">
+        <form method="post" action="{{ url_for('main.create_shared_cart') }}">
+          <div class="modal-header border-0 pb-0">
+            <div>
+              <div class="shared-cart-kicker">Beta feature</div>
+              <h5 class="modal-title">Create Shared Kart for <span id="sharedCartDate"></span></h5>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body pt-3">
+            <input type="hidden" name="date" id="sharedCartDateInput">
+            <div class="shared-cart-hero mb-3">
+              <div class="shared-cart-icon-wrap">
+                <span class="material-icons">shopping_cart</span>
+              </div>
+              <div>
+                <div class="fw-semibold">Collaborative shopping, one shared space</div>
+                <div class="small text-muted">Use Shared Kart when the group needs a lightweight board for items and costs without opening a full meal proposal.</div>
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Title <small class="text-muted">(optional)</small></label>
+              <input type="text" name="title" id="sharedCartTitle" class="form-control" maxlength="150" placeholder="Shared Kart">
+            </div>
+            <div class="mb-3">
+              <label class="form-label">Start time <small class="text-muted">(optional)</small></label>
+              <input type="time" name="start_time" id="sharedCartStartTime" class="form-control" value="12:00">
+            </div>
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="checkbox" name="auto_join" id="sharedCartAutoJoin" value="1" checked>
+              <label class="form-check-label" for="sharedCartAutoJoin">Join this Shared Kart automatically</label>
+            </div>
+          </div>
+          <div class="modal-footer border-0 pt-0">
+            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary">Create Shared Kart</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
   <script>
+  function closeAllCreateFabs(){
+    document.querySelectorAll('.fab-stack.is-open').forEach(function(node){
+      node.classList.remove('is-open');
+      var toggle = node.querySelector('.fab-toggle');
+      if (toggle) toggle.setAttribute('aria-expanded', 'false');
+    });
+  }
+
+  function toggleCreateFab(button){
+    var stack = button.closest('.fab-stack');
+    var open = stack.classList.contains('is-open');
+    closeAllCreateFabs();
+    if (!open) {
+      stack.classList.add('is-open');
+      button.setAttribute('aria-expanded', 'true');
+    }
+  }
+
   function openProposeModal(date){
+    closeAllCreateFabs();
     document.getElementById('modalDate').innerText = date;
     document.getElementById('modalDateInput').value = date;
     // reset deadline toggle
@@ -227,6 +312,17 @@
     // pre-compute default deadline (12h before start time on that date)
     updateDefaultDeadline(date);
     var myModal = new bootstrap.Modal(document.getElementById('proposeModal'));
+    myModal.show();
+  }
+
+  function openSharedCartModal(date){
+    closeAllCreateFabs();
+    document.getElementById('sharedCartDate').innerText = date;
+    document.getElementById('sharedCartDateInput').value = date;
+    document.getElementById('sharedCartTitle').value = '';
+    document.getElementById('sharedCartStartTime').value = '12:00';
+    document.getElementById('sharedCartAutoJoin').checked = true;
+    var myModal = new bootstrap.Modal(document.getElementById('sharedCartModal'));
     myModal.show();
   }
 
@@ -247,6 +343,12 @@
   function pad(n){ return n < 10 ? '0'+n : ''+n; }
 
   document.addEventListener('DOMContentLoaded', function(){
+    document.addEventListener('click', function(event){
+      if (!event.target.closest('.fab-stack')) {
+        closeAllCreateFabs();
+      }
+    });
+
     var toggle = document.getElementById('modalDeadlineToggle');
     var row = document.getElementById('modalDeadlineRow');
     var deadlineInput = document.getElementById('modalJoinDeadline');
@@ -290,6 +392,15 @@
       flex: 0 1 calc(100% - 1rem);
       max-width: 100%;
     }
+
+    .fab-options {
+      left: 0;
+      right: auto;
+    }
+
+    .fab-option-btn {
+      min-width: 170px;
+    }
   }
 
   /* propose button: much lighter, more transparent accent but visible */
@@ -328,6 +439,120 @@
   .propose-btn:active {
     transform: translateY(0);
     box-shadow: 0 4px 8px rgba(67,89,102,0.08);
+  }
+
+  .fab-stack {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .fab-options {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 0.7rem);
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(10px) scale(0.96);
+    transform-origin: bottom right;
+    transition: opacity 180ms ease, transform 180ms ease;
+    z-index: 8;
+  }
+
+  .fab-stack.is-open .fab-options {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+  }
+
+  .fab-stack.is-open .fab-toggle {
+    transform: rotate(45deg);
+    background: rgba(82,174,50,0.92);
+    border-color: rgba(82,174,50,0.92);
+  }
+
+  .fab-option-btn {
+    border: 0;
+    border-radius: 999px;
+    background: linear-gradient(135deg, rgba(255,255,255,0.98), rgba(241,245,248,0.96));
+    color: #24424c;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem;
+    padding: 0.65rem 0.95rem;
+    min-width: 185px;
+    box-shadow: 0 14px 28px rgba(22,38,46,0.18);
+    font-size: 0.83rem;
+    font-weight: 600;
+    transition: transform 160ms ease, box-shadow 160ms ease;
+  }
+
+  .fab-option-btn:hover,
+  .fab-option-btn:focus {
+    transform: translateY(-1px);
+    box-shadow: 0 18px 34px rgba(22,38,46,0.22);
+    outline: none;
+  }
+
+  .fab-option-btn .material-icons {
+    font-size: 1rem;
+  }
+
+  .fab-option-cart {
+    background: linear-gradient(135deg, rgba(82,174,50,0.96), rgba(63,143,40,0.96));
+    color: #fff;
+  }
+
+  .shared-cart-badge {
+    background: rgba(67,89,102,0.12);
+    color: #2b4652;
+    border: 1px solid rgba(67,89,102,0.18);
+  }
+
+  .shared-cart-modal {
+    border: 0;
+    border-radius: 22px;
+    overflow: hidden;
+    background: linear-gradient(180deg, #f8fbfc, #ffffff 48%);
+  }
+
+  .shared-cart-kicker {
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #527a34;
+    margin-bottom: 0.35rem;
+  }
+
+  .shared-cart-hero {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem;
+    border-radius: 18px;
+    background: linear-gradient(135deg, rgba(82,174,50,0.12), rgba(67,89,102,0.08));
+  }
+
+  .shared-cart-icon-wrap {
+    width: 58px;
+    height: 58px;
+    border-radius: 18px;
+    background: linear-gradient(135deg, var(--ccm-join), var(--ccm-accent));
+    color: #fff;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 14px 28px rgba(67,89,102,0.18);
+  }
+
+  .shared-cart-icon-wrap .material-icons {
+    font-size: 1.6rem;
   }
 
   /* hint next to propose button: smaller and much lighter */

@@ -25,6 +25,7 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(128), nullable=False)
     avatar = db.Column(db.String(255), nullable=True)
     is_admin = db.Column(db.Boolean, default=False)
+    is_beta_tester = db.Column(db.Boolean, default=False)
     # per-user notification settings (default to True to opt new users in)
     notify_new_proposal = db.Column(db.Boolean, default=True)
     notify_discussion = db.Column(db.Boolean, default=True)
@@ -42,6 +43,10 @@ class User(UserMixin, db.Model):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
+    @property
+    def has_beta_access(self):
+        return bool(self.is_admin or self.is_beta_tester)
 
 class Recipe(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -62,6 +67,8 @@ class Proposal(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     date = db.Column(db.Date, nullable=False)
     recipe_id = db.Column(db.Integer, db.ForeignKey('recipe.id'), nullable=False)
+    proposal_type = db.Column(db.String(20), nullable=False, default='meal')
+    title = db.Column(db.String(150), nullable=True)
     proposer_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     # optional start time for the lunch (stored as time)
@@ -80,6 +87,18 @@ class Proposal(db.Model):
     # add 'overlaps' to silence SQLAlchemy mapper warnings about multiple relationships
     grocery_user = db.relationship('User', foreign_keys=[grocery_user_id], overlaps='grocery_proposals')
     cook_user = db.relationship('User', foreign_keys=[cook_user_id], overlaps='cook_proposals')
+
+    @property
+    def is_shared_cart(self):
+        return (self.proposal_type or 'meal') == 'shared_cart'
+
+    @property
+    def display_title(self):
+        return (self.title or (self.recipe.title if self.recipe else 'Shared Kart')).strip()
+
+    @property
+    def discussion_label(self):
+        return 'shared cart' if self.is_shared_cart else 'meal'
 
 class Participant(db.Model):
     id = db.Column(db.Integer, primary_key=True)

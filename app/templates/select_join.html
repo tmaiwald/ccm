@@ -13,7 +13,7 @@
           <input class="form-check-input mt-2" type="checkbox" name="proposal_ids" value="{{ p.id }}" id="prop_{{ p.id }}"
             {% if already_joined %}disabled checked{% endif %}>
           <label class="form-check-label ms-2 w-100" for="prop_{{ p.id }}">
-            <div class="fw-bold">{{ p.recipe.title }}</div>
+            <div class="fw-bold">{{ p.display_title }}</div>
             <div class="small text-muted">
               {{ p.start_time.strftime('%H:%M') if p.start_time else '12:00' }}
               &middot; {{ p.participants|length }} participant(s)

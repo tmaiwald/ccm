@@ -3,11 +3,29 @@ import os
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager
 from flask_migrate import Migrate
+from sqlalchemy import inspect, text
 
 db = SQLAlchemy()
 login_manager = LoginManager()
 login_manager.login_view = 'auth.login'
 migrate = Migrate()
+
+
+def _ensure_column(engine, table_name, column_name, definition):
+    columns = {row['name'] for row in inspect(engine).get_columns(table_name)}
+    if column_name in columns:
+        return
+    with engine.begin() as connection:
+        connection.execute(text(f'ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}'))
+
+
+def _ensure_runtime_schema(engine):
+    inspector = inspect(engine)
+    if inspector.has_table('user'):
+        _ensure_column(engine, 'user', 'is_beta_tester', 'BOOLEAN DEFAULT 0')
+    if inspector.has_table('proposal'):
+        _ensure_column(engine, 'proposal', 'proposal_type', "VARCHAR(20) NOT NULL DEFAULT 'meal'")
+        _ensure_column(engine, 'proposal', 'title', 'VARCHAR(150)')
 
 
 def create_app():
@@ -46,12 +64,12 @@ def create_app():
         # import models before creating tables
         from . import models  # noqa: F401
         db.create_all()
+        _ensure_runtime_schema(db.engine)
 
         # create dummy data if none exists
         from .models import User, Recipe
         # avoid running queries that assume newer schema during migrations
         from sqlalchemy.exc import OperationalError
-        from sqlalchemy import inspect
         try:
             if inspect(db.engine).has_table('user'):
                 if User.query.count() == 0:
