@@ -24,6 +24,8 @@ def register():
         u.set_password(password)
         db.session.add(u)
         db.session.commit()
+        from .routes import notify_admins_about_new_user
+        notify_admins_about_new_user(u)
         login_user(u, remember=True)
         return redirect(url_for('main.index'))
     return render_template('register.html')

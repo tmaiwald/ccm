@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory, jsonify
 from . import db
-from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal, RegularMealMessage, MealExpense, MealExpenseSplit, RecipeComment, LoginDomainBlocklist, normalize_email_domain, is_email_domain_blacklisted
+from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal, RegularMealMessage, MealExpense, MealExpenseSplit, RecipeComment, LoginDomainBlocklist, AdminNotificationPreference, normalize_email_domain, is_email_domain_blacklisted
 from flask_login import current_user, login_required
 from datetime import date, timedelta, time
 from calendar import monthrange
@@ -531,6 +531,45 @@ def send_web_push_to_user(user, title: str, body: str, url: str = '/'):
             db.session.delete(s)
         db.session.commit()
     return ok
+
+
+def admin_wants_new_user_notifications(user) -> bool:
+    if not user or not getattr(user, 'is_admin', False):
+        return False
+    preference = getattr(user, 'admin_notification_preference', None)
+    if preference is None:
+        return True
+    return bool(preference.notify_new_user)
+
+
+def notify_admins_about_new_user(new_user, created_by=None):
+    if not new_user:
+        return False
+
+    actor_name = getattr(created_by, 'username', None) or 'self-registration'
+    email_text = new_user.email or '(no email)'
+    subject = f'CCM new user: {new_user.username}'
+    body = (
+        f'A new CCM user was created: {new_user.username}\n'
+        f'Email: {email_text}\n'
+        f'Created by: {actor_name}'
+    )
+
+    push_ok = False
+    mail_recipients = []
+    for admin in User.query.filter(User.is_admin == True, User.id != new_user.id).all():
+        if created_by and admin.id == created_by.id:
+            continue
+        if not admin_wants_new_user_notifications(admin):
+            continue
+        push_ok = send_web_push_to_user(admin, subject, body, url=url_for('main.admin_dashboard')) or push_ok
+        if admin.email:
+            mail_recipients.append(admin.email)
+
+    mail_ok = False
+    if mail_recipients:
+        mail_ok = send_mail(subject, body, mail_recipients)
+    return push_ok or mail_ok
 
 
 # helper to create nicer subjects and bodies for proposal-related mails
@@ -1497,6 +1536,10 @@ def admin_dashboard():
     users = User.query.order_by(User.username).all()
     cfg = MailConfig.query.first()
     blacklisted_domains = LoginDomainBlocklist.query.order_by(LoginDomainBlocklist.domain.asc()).all()
+    admin_notification_preferences = {
+        pref.user_id: pref.notify_new_user
+        for pref in AdminNotificationPreference.query.all()
+    }
     push_rows = (
         db.session.query(
             WebPushSubscription.user_id,
@@ -1532,10 +1575,32 @@ def admin_dashboard():
         users=users,
         cfg=cfg,
         blacklisted_domains=blacklisted_domains,
+        admin_notification_preferences=admin_notification_preferences,
         push_stats_by_user_id=push_stats_by_user_id,
         push_subscribed_users=push_subscribed_users,
         total_push_subscriptions=total_push_subscriptions,
     )
+
+
+@main.route('/admin/admin_notifications/<int:user_id>', methods=['POST'])
+@login_required
+@admin_required
+def admin_update_admin_notifications(user_id):
+    u = User.query.get_or_404(user_id)
+    if not u.is_admin:
+        flash('Admin-only notification settings can only be changed for admin accounts', 'warning')
+        return redirect(url_for('main.admin_dashboard'))
+
+    enabled = bool(request.form.get('notify_new_user'))
+    preference = AdminNotificationPreference.query.filter_by(user_id=u.id).first()
+    if not preference:
+        preference = AdminNotificationPreference(user_id=u.id)
+        db.session.add(preference)
+    preference.notify_new_user = enabled
+    db.session.commit()
+
+    flash('Admin notification settings updated', 'success')
+    return redirect(url_for('main.admin_dashboard'))
 
 
 @main.route('/admin/login_domain_blacklist', methods=['POST'])
@@ -1743,6 +1808,7 @@ def admin_create_user():
     u.set_password(password)
     db.session.add(u)
     db.session.commit()
+    notify_admins_about_new_user(u, created_by=current_user)
     flash('User created', 'success')
     return redirect(url_for('main.admin_dashboard'))
 

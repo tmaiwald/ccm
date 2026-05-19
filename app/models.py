@@ -166,6 +166,18 @@ class LoginDomainBlocklist(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class AdminNotificationPreference(db.Model):
+    __tablename__ = 'admin_notification_preference'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, unique=True)
+    notify_new_user = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = db.relationship('User', backref=db.backref('admin_notification_preference', uselist=False, cascade='all, delete-orphan'))
+
+
 class Group(db.Model):
     __tablename__ = 'ccm_group'
     id = db.Column(db.Integer, primary_key=True)
