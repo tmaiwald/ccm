@@ -92,6 +92,45 @@
 
   <div class="card mb-3">
     <div class="card-body">
+      <h5 class="card-title">Push subscriptions</h5>
+      <p class="small text-muted mb-3">Users with at least one stored push subscription: <strong>{{ push_subscribed_users|length }}</strong> of <strong>{{ users|length }}</strong>. Total stored subscriptions: <strong>{{ total_push_subscriptions }}</strong>.</p>
+      {% if push_subscribed_users %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Email</th>
+                <th>Stored subscriptions</th>
+                <th>Last registered</th>
+                <th>Flags</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in push_subscribed_users %}
+                <tr>
+                  <td>{{ item.user.username }}</td>
+                  <td>{{ item.user.email or '—' }}</td>
+                  <td>{{ item.subscription_count }}</td>
+                  <td>{{ item.last_registered_at or '—' }}</td>
+                  <td>
+                    N: {{ 'on' if item.user.notify_new_proposal else 'off' }} |
+                    D: {{ 'on' if item.user.notify_discussion else 'off' }} |
+                    B: {{ 'on' if item.user.notify_broadcast else 'off' }}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="small text-muted mb-0">No stored push subscriptions yet.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card mb-3">
+    <div class="card-body">
       <h5 class="card-title">Broadcast message</h5>
       <p class="small text-muted">Send a subject and message to all users that have an email address.</p>
       <form method="post" action="{{ url_for('main.admin_broadcast') }}">

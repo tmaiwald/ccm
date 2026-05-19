@@ -1496,7 +1496,44 @@ def admin_toggle_global_notifications():
 def admin_dashboard():
     users = User.query.order_by(User.username).all()
     cfg = MailConfig.query.first()
-    return render_template('admin_dashboard.html', users=users, cfg=cfg)
+    push_rows = (
+        db.session.query(
+            WebPushSubscription.user_id,
+            db.func.count(WebPushSubscription.id).label('subscription_count'),
+            db.func.max(WebPushSubscription.created_at).label('last_registered_at'),
+        )
+        .group_by(WebPushSubscription.user_id)
+        .all()
+    )
+
+    push_stats_by_user_id = {
+        row.user_id: {
+            'subscription_count': row.subscription_count,
+            'last_registered_at': row.last_registered_at,
+        }
+        for row in push_rows
+    }
+
+    push_subscribed_users = [
+        {
+            'user': user,
+            'subscription_count': push_stats_by_user_id[user.id]['subscription_count'],
+            'last_registered_at': push_stats_by_user_id[user.id]['last_registered_at'],
+        }
+        for user in users
+        if user.id in push_stats_by_user_id
+    ]
+
+    total_push_subscriptions = sum(item['subscription_count'] for item in push_subscribed_users)
+
+    return render_template(
+        'admin_dashboard.html',
+        users=users,
+        cfg=cfg,
+        push_stats_by_user_id=push_stats_by_user_id,
+        push_subscribed_users=push_subscribed_users,
+        total_push_subscriptions=total_push_subscriptions,
+    )
 
 
 @main.route('/admin/send_test_mail', methods=['POST'])
