@@ -407,11 +407,18 @@ def send_mail(subject, text_body, recipients, html_body=None):
         return False
     if not cfg.smtp_server or not cfg.username or not cfg.password or not cfg.from_address:
         return False
+    recipients = [recipient.strip() for recipient in recipients if recipient and recipient.strip()]
+    if not recipients:
+        return False
     try:
         msg = EmailMessage()
         msg['Subject'] = subject
         msg['From'] = formataddr(("Cleverly Connected Meals (CCM)", cfg.from_address))
-        msg['To'] = ', '.join(recipients)
+        if len(recipients) == 1:
+            msg['To'] = recipients[0]
+        else:
+            msg['To'] = formataddr(("Cleverly Connected Meals (CCM)", cfg.from_address))
+            msg['Bcc'] = ', '.join(recipients)
         # plain text part
         msg.set_content(text_body)
         # build HTML part if not provided
