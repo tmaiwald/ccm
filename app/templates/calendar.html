@@ -23,6 +23,9 @@
             </div>
             <div class="card-body p-2">
               <h6 class="card-title mb-1 d-flex align-items-center gap-2 flex-wrap">
+                {% if p.is_shared_cart %}
+                  <span class="material-icons shared-cart-icon" aria-hidden="true">shopping_cart</span>
+                {% endif %}
                 <a href="{{ url_for('main.proposal_discuss', proposal_id=p.id) }}">{{ p.display_title }}</a>
                 {% if p.is_shared_cart %}
                   <span class="badge shared-cart-badge">Shared Kart</span>
@@ -92,7 +95,12 @@
                     <a class="stretched-link" href="{{ url_for('main.proposal_discuss', proposal_id=p.id) }}" aria-hidden="true"></a>
                     <div class="d-flex justify-content-between align-items-start">
                       <div>
-                        <strong class="d-block">{{ p.display_title }}</strong>
+                        <span class="d-flex align-items-center gap-1 flex-wrap">
+                          {% if p.is_shared_cart %}
+                            <span class="material-icons shared-cart-icon" aria-hidden="true">shopping_cart</span>
+                          {% endif %}
+                          <strong class="d-block">{{ p.display_title }}</strong>
+                        </span>
                         {% if p.is_shared_cart %}
                           <span class="badge shared-cart-badge mt-1">Shared Kart</span>
                         {% endif %}
@@ -394,12 +402,15 @@
     }
 
     .fab-options {
-      left: 0;
-      right: auto;
+      left: auto;
+      right: 0;
+      width: min(190px, calc(100vw - 2rem));
+      max-width: calc(100vw - 2rem);
     }
 
     .fab-option-btn {
-      min-width: 170px;
+      width: 100%;
+      min-width: 0;
     }
   }
 
@@ -506,6 +517,12 @@
   .fab-option-cart {
     background: linear-gradient(135deg, rgba(82,174,50,0.96), rgba(63,143,40,0.96));
     color: #fff;
+  }
+
+  .shared-cart-icon {
+    font-size: 0.95rem;
+    color: #3f8f28;
+    vertical-align: middle;
   }
 
   .shared-cart-badge {
