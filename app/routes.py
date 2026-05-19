@@ -832,7 +832,8 @@ def propose_recipe(recipe_id, date_str):
         p.max_participants = int(request.form.get('max_participants')) if request.form.get('max_participants') else None
     except (ValueError, TypeError):
         p.max_participants = None
-    deadline_str = request.form.get('join_deadline')
+    deadline_enabled = bool(request.form.get('join_deadline_enabled'))
+    deadline_str = request.form.get('join_deadline') if deadline_enabled else None
     p.join_deadline = datetime.fromisoformat(deadline_str) if deadline_str else None
     db.session.add(p)
     db.session.commit()
@@ -867,7 +868,8 @@ def create_proposal(recipe_id, date_str):
         p.max_participants = int(request.form.get('max_participants')) if request.form.get('max_participants') else None
     except (ValueError, TypeError):
         p.max_participants = None
-    deadline_str = request.form.get('join_deadline')
+    deadline_enabled = bool(request.form.get('join_deadline_enabled'))
+    deadline_str = request.form.get('join_deadline') if deadline_enabled else None
     p.join_deadline = datetime.fromisoformat(deadline_str) if deadline_str else None
     db.session.add(p)
     db.session.commit()
@@ -1036,7 +1038,8 @@ def propose_recipe_form():
         p.max_participants = int(request.form.get('max_participants')) if request.form.get('max_participants') else None
     except (ValueError, TypeError):
         p.max_participants = None
-    deadline_str = request.form.get('join_deadline')
+    deadline_enabled = bool(request.form.get('join_deadline_enabled'))
+    deadline_str = request.form.get('join_deadline') if deadline_enabled else None
     p.join_deadline = datetime.fromisoformat(deadline_str) if deadline_str else None
     db.session.add(p)
     db.session.commit()
