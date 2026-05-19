@@ -740,9 +740,15 @@ def calendar_view():
 
     # show only Monday..Friday
     days_list = [start + timedelta(days=i) for i in range(5)]
+    visible_proposals = Proposal.query
+    if not current_user.has_beta_access:
+        visible_proposals = visible_proposals.filter(
+            or_(Proposal.proposal_type != 'shared_cart', Proposal.proposal_type == None)
+        )
+
     days = []
     for d in days_list:
-        proposals = Proposal.query.filter_by(date=d).all()
+        proposals = visible_proposals.filter_by(date=d).all()
         days.append({'date': d, 'proposals': proposals})
 
     # prev/next week params
@@ -771,12 +777,17 @@ def calendar_view():
     commitments = []
     if current_user.is_authenticated:
         # show only commitments from today onwards
-        commitments = Proposal.query.outerjoin(Participant).filter(
+        commitments_query = Proposal.query.outerjoin(Participant).filter(
             or_(Participant.user_id == current_user.id,
                 Proposal.cook_user_id == current_user.id,
                 Proposal.grocery_user_id == current_user.id),
             Proposal.date >= today
-        ).distinct().order_by(Proposal.date.asc(), Proposal.start_time.asc()).all()
+        )
+        if not current_user.has_beta_access:
+            commitments_query = commitments_query.filter(
+                or_(Proposal.proposal_type != 'shared_cart', Proposal.proposal_type == None)
+            )
+        commitments = commitments_query.distinct().order_by(Proposal.date.asc(), Proposal.start_time.asc()).all()
 
     # build per-proposal claimed shopping items for the current user
     my_claimed = {}
