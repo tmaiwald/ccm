@@ -1,5 +1,5 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash
-from .models import User
+from .models import User, is_email_domain_blacklisted
 from . import db
 from flask_login import login_user, logout_user, login_required, current_user
 
@@ -17,6 +17,9 @@ def register():
         if User.query.filter_by(username=username).first():
             flash('Username taken', 'warning')
             return redirect(url_for('auth.register'))
+        if email and is_email_domain_blacklisted(email):
+            flash('Registration is blocked for that email domain', 'warning')
+            return redirect(url_for('auth.register'))
         u = User(username=username, email=email)
         u.set_password(password)
         db.session.add(u)
@@ -33,6 +36,9 @@ def login():
         password = request.form.get('password', '')
         u = User.query.filter_by(username=username).first()
         if u and u.check_password(password):
+            if is_email_domain_blacklisted(u.email):
+                flash('Login is blocked for this account email domain', 'danger')
+                return redirect(url_for('auth.login'))
             remember = bool(request.form.get('remember'))
             login_user(u, remember=remember)
             return redirect(url_for('main.index'))

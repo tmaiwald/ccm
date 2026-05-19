@@ -3,6 +3,21 @@ from datetime import datetime
 from flask_login import UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 
+
+def normalize_email_domain(email):
+    value = (email or '').strip().lower()
+    if '@' not in value:
+        return None
+    domain = value.rsplit('@', 1)[1].strip().lstrip('@').rstrip('.')
+    return domain or None
+
+
+def is_email_domain_blacklisted(email):
+    domain = normalize_email_domain(email)
+    if not domain:
+        return False
+    return LoginDomainBlocklist.query.filter_by(domain=domain).first() is not None
+
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -141,6 +156,14 @@ class WebPushSubscription(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     user = db.relationship('User', backref=db.backref('push_subscriptions', lazy=True, cascade='all, delete-orphan'))
+
+
+class LoginDomainBlocklist(db.Model):
+    __tablename__ = 'login_domain_blocklist'
+
+    id = db.Column(db.Integer, primary_key=True)
+    domain = db.Column(db.String(255), nullable=False, unique=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class Group(db.Model):

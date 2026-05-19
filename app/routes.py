@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory, jsonify
 from . import db
-from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal, RegularMealMessage, MealExpense, MealExpenseSplit, RecipeComment
+from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal, RegularMealMessage, MealExpense, MealExpenseSplit, RecipeComment, LoginDomainBlocklist, normalize_email_domain, is_email_domain_blacklisted
 from flask_login import current_user, login_required
 from datetime import date, timedelta, time
 from calendar import monthrange
@@ -1496,6 +1496,7 @@ def admin_toggle_global_notifications():
 def admin_dashboard():
     users = User.query.order_by(User.username).all()
     cfg = MailConfig.query.first()
+    blacklisted_domains = LoginDomainBlocklist.query.order_by(LoginDomainBlocklist.domain.asc()).all()
     push_rows = (
         db.session.query(
             WebPushSubscription.user_id,
@@ -1530,10 +1531,43 @@ def admin_dashboard():
         'admin_dashboard.html',
         users=users,
         cfg=cfg,
+        blacklisted_domains=blacklisted_domains,
         push_stats_by_user_id=push_stats_by_user_id,
         push_subscribed_users=push_subscribed_users,
         total_push_subscriptions=total_push_subscriptions,
     )
+
+
+@main.route('/admin/login_domain_blacklist', methods=['POST'])
+@login_required
+@admin_required
+def admin_add_login_domain_blacklist():
+    domain_input = request.form.get('domain', '')
+    domain = normalize_email_domain(f'user@{domain_input}') if '@' not in domain_input else normalize_email_domain(domain_input)
+    if not domain:
+        flash('Provide a valid domain name', 'warning')
+        return redirect(url_for('main.admin_dashboard'))
+
+    existing = LoginDomainBlocklist.query.filter_by(domain=domain).first()
+    if existing:
+        flash('That domain is already blacklisted', 'warning')
+        return redirect(url_for('main.admin_dashboard'))
+
+    db.session.add(LoginDomainBlocklist(domain=domain))
+    db.session.commit()
+    flash(f'Blocked logins for email domain {domain}', 'success')
+    return redirect(url_for('main.admin_dashboard'))
+
+
+@main.route('/admin/login_domain_blacklist/<int:block_id>/delete', methods=['POST'])
+@login_required
+@admin_required
+def admin_delete_login_domain_blacklist(block_id):
+    block = LoginDomainBlocklist.query.get_or_404(block_id)
+    db.session.delete(block)
+    db.session.commit()
+    flash(f'Removed login block for {block.domain}', 'success')
+    return redirect(url_for('main.admin_dashboard'))
 
 
 @main.route('/admin/send_test_mail', methods=['POST'])
@@ -1652,6 +1686,9 @@ def admin_update_notifications(user_id):
     email = (request.form.get('email') or '').strip()
     if email == '':
         email = None
+    if email and is_email_domain_blacklisted(email):
+        flash('That email domain is blacklisted for login', 'warning')
+        return redirect(url_for('main.admin_dashboard'))
     # remember old email for notifications
     old_email = u.email
     if email:
@@ -1698,6 +1735,9 @@ def admin_create_user():
         return redirect(url_for('main.admin_dashboard'))
     if User.query.filter_by(username=username).first():
         flash('Username taken', 'warning')
+        return redirect(url_for('main.admin_dashboard'))
+    if email and is_email_domain_blacklisted(email):
+        flash('That email domain is blacklisted for login', 'warning')
         return redirect(url_for('main.admin_dashboard'))
     u = User(username=username, email=email, is_admin=is_admin)
     u.set_password(password)
@@ -2011,6 +2051,9 @@ def profile_update_credentials(user_id):
     # normalize empty strings to None
     if email == '':
         email = None
+    if email and is_email_domain_blacklisted(email):
+        flash('That email domain is blacklisted for login', 'warning')
+        return redirect(url_for('main.profile', user_id=user_id))
 
     # check email uniqueness when provided
     if email:

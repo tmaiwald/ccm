@@ -44,6 +44,49 @@
     <div class="col-auto"><button class="btn btn-primary">Create</button></div>
   </form>
 
+  <div class="card mb-3">
+    <div class="card-body">
+      <h5 class="card-title">Login domain blacklist</h5>
+      <p class="small text-muted">Users whose account email ends with one of these domains cannot log in or register with that domain.</p>
+      <form method="post" action="{{ url_for('main.admin_add_login_domain_blacklist') }}" class="row g-2 align-items-center mb-3">
+        <div class="col-sm-6 col-md-4">
+          <input name="domain" class="form-control" placeholder="example.com" required>
+        </div>
+        <div class="col-auto">
+          <button class="btn btn-outline-danger">Add domain</button>
+        </div>
+      </form>
+      {% if blacklisted_domains %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr>
+                <th>Domain</th>
+                <th>Added</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for blocked in blacklisted_domains %}
+                <tr>
+                  <td>{{ blocked.domain }}</td>
+                  <td>{{ blocked.created_at }}</td>
+                  <td class="text-end">
+                    <form method="post" action="{{ url_for('main.admin_delete_login_domain_blacklist', block_id=blocked.id) }}" style="display:inline">
+                      <button class="btn btn-sm btn-outline-secondary">Remove</button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="small text-muted mb-0">No blacklisted login domains configured.</p>
+      {% endif %}
+    </div>
+  </div>
+
   <h4>Users</h4>
   <table class="table">
     <thead><tr><th>id</th><th>username</th><th>email</th><th>admin</th><th>actions</th></tr></thead>
