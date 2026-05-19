@@ -6,6 +6,9 @@ VENV_PY="$PROJECT_DIR/venv/bin/python"
 REQUIREMENTS="$PROJECT_DIR/requirements.txt"
 SERVICE_NAME="ccm"
 SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME.service"
+AUTOMATION_SERVICE_NAME="ccm-regular-meals"
+AUTOMATION_SERVICE_FILE="/etc/systemd/system/$AUTOMATION_SERVICE_NAME.service"
+AUTOMATION_TIMER_FILE="/etc/systemd/system/$AUTOMATION_SERVICE_NAME.timer"
 CURRENT_USER="$(whoami)"
 
 echo "Project directory: $PROJECT_DIR"
@@ -45,8 +48,44 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
+echo "Writing automation service to $AUTOMATION_SERVICE_FILE (requires sudo)..."
+
+sudo tee "$AUTOMATION_SERVICE_FILE" > /dev/null <<EOF
+[Unit]
+Description=CCM regular meal automation job
+After=network.target
+
+[Service]
+Type=oneshot
+User=$CURRENT_USER
+WorkingDirectory=$PROJECT_DIR
+Environment=PATH=$PROJECT_DIR/venv/bin
+ExecStart=$PROJECT_DIR/venv/bin/flask --app run.py process-regular-meals
+StandardOutput=journal
+StandardError=journal
+EOF
+
+echo "Writing automation timer to $AUTOMATION_TIMER_FILE (requires sudo)..."
+
+sudo tee "$AUTOMATION_TIMER_FILE" > /dev/null <<EOF
+[Unit]
+Description=Run CCM regular meal automation every 15 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Persistent=true
+Unit=$AUTOMATION_SERVICE_NAME.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
 echo "Reloading systemd and starting service..."
 sudo systemctl daemon-reload
 sudo systemctl enable --now "$SERVICE_NAME"
+sudo systemctl enable --now "$AUTOMATION_SERVICE_NAME.timer"
 
-echo "Done. Service '$SERVICE_NAME' enabled and started. Check status with: sudo systemctl status $SERVICE_NAME"
+echo "Done. Service '$SERVICE_NAME' enabled and started."
+echo "Automation timer '$AUTOMATION_SERVICE_NAME.timer' enabled and started."
+echo "Check status with: sudo systemctl status $SERVICE_NAME && sudo systemctl status $AUTOMATION_SERVICE_NAME.timer"

@@ -265,6 +265,8 @@ class RegularMeal(db.Model):
     day_of_week = db.Column(db.Integer, nullable=False)     # 0=Mon..6=Sun
     start_time = db.Column(db.Time, nullable=True)
     active = db.Column(db.Boolean, default=True)
+    auto_invite_enabled = db.Column(db.Boolean, default=False, nullable=False)
+    invite_days_before = db.Column(db.Integer, default=3, nullable=False)
     created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -272,6 +274,26 @@ class RegularMeal(db.Model):
     recipe = db.relationship('Recipe', backref=db.backref('regular_meals', lazy=True))
     created_by = db.relationship('User', foreign_keys=[created_by_id],
                                  backref=db.backref('created_regular_meals', lazy=True))
+
+
+class RegularMealOccurrence(db.Model):
+    __tablename__ = 'regular_meal_occurrence'
+
+    id = db.Column(db.Integer, primary_key=True)
+    regular_meal_id = db.Column(db.Integer, db.ForeignKey('regular_meal.id'), nullable=False)
+    occurrence_date = db.Column(db.Date, nullable=False)
+    proposal_id = db.Column(db.Integer, db.ForeignKey('proposal.id'), nullable=True)
+    auto_created = db.Column(db.Boolean, default=False, nullable=False)
+    invited_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    regular_meal = db.relationship(
+        'RegularMeal',
+        backref=db.backref('occurrences', lazy=True, cascade='all, delete-orphan')
+    )
+    proposal = db.relationship('Proposal', backref=db.backref('regular_meal_occurrences', lazy=True))
+
+    __table_args__ = (db.UniqueConstraint('regular_meal_id', 'occurrence_date'),)
 
 
 class RecipeComment(db.Model):

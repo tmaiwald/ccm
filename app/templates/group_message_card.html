@@ -14,7 +14,7 @@
              style="width:20px;height:20px;object-fit:cover;border-radius:4px;vertical-align:middle;margin-right:4px;">
       {% endif %}
       <a href="{{ url_for('main.profile', user_id=m.user_id) }}" class="text-decoration-none text-muted">{{ m.user.username }}</a>
-      &nbsp;·&nbsp; {{ m.created_at.strftime('%Y-%m-%d %H:%M') }}
+      &nbsp;·&nbsp; <span data-utc-datetime="{{ m.created_at|utc_iso }}">{{ m.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
     </div>
     {% if m.content %}<div class="md-content">{{ m.content | markdown }}</div>{% endif %}
     {% if m.attachment %}

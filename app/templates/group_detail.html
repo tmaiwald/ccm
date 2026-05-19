@@ -219,6 +219,11 @@
                       {% endif %}
                       {% if rm.start_time %}&middot; {{ rm.start_time.strftime('%H:%M') }}{% endif %}
                     </span>
+                    {% if rm.auto_invite_enabled %}
+                      <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">
+                        Auto invite {{ rm.invite_days_before }} day{% if rm.invite_days_before != 1 %}s{% endif %} before
+                      </span>
+                    {% endif %}
                   </div>
                   {% set upcoming = regular_meals_upcoming.get(rm.id, []) %}
                   {% set anchor = regular_meals_anchor.get(rm.id) %}
@@ -235,17 +240,15 @@
                 </div>
                 {% if membership and (rm.created_by_id == current_user.id or group.creator_id == current_user.id or current_user.is_admin) %}
                   <div class="d-flex gap-1 flex-shrink-0">
-                    {% if membership and rm.week_of_month <= -2 %}
-                      <button class="btn btn-sm btn-outline-secondary"
-                              type="button"
-                              data-bs-toggle="collapse"
-                              data-bs-target="#regularMealShift{{ rm.id }}"
-                              aria-expanded="false"
-                              aria-controls="regularMealShift{{ rm.id }}"
-                              title="Schedule settings">
-                        <span class="material-icons" style="font-size:14px;vertical-align:middle;">build</span>
-                      </button>
-                    {% endif %}
+                    <button class="btn btn-sm btn-outline-secondary"
+                            type="button"
+                            data-bs-toggle="collapse"
+                            data-bs-target="#regularMealSettings{{ rm.id }}"
+                            aria-expanded="false"
+                            aria-controls="regularMealSettings{{ rm.id }}"
+                            title="Schedule settings">
+                      <span class="material-icons" style="font-size:14px;vertical-align:middle;">build</span>
+                    </button>
                     <form method="post" action="{{ url_for('main.regular_meal_toggle', group_id=group.id, meal_id=rm.id) }}">
                       <button type="submit" class="btn btn-sm btn-outline-secondary"
                               title="{{ 'Pause' if rm.active else 'Activate' }}">
@@ -261,16 +264,32 @@
                   </div>
                 {% endif %}
               </div>
-              {% if membership and rm.week_of_month <= -2 %}
-                <div class="collapse mt-2" id="regularMealShift{{ rm.id }}">
-                  <form method="post" action="{{ url_for('main.regular_meal_shift', group_id=group.id, meal_id=rm.id) }}"
-                        class="d-flex align-items-end gap-2 flex-wrap">
-                    <div>
-                      <label class="form-label form-label-sm mb-1">Shift by weeks</label>
-                      <input type="number" name="shift_weeks" class="form-control form-control-sm" value="1" step="1" min="-52" max="52" style="width:90px;">
-                    </div>
-                    <button type="submit" class="btn btn-sm btn-outline-primary">Apply</button>
-                  </form>
+              {% if membership and (rm.created_by_id == current_user.id or group.creator_id == current_user.id or current_user.is_admin) %}
+                <div class="collapse mt-2" id="regularMealSettings{{ rm.id }}">
+                  <div class="border rounded p-2 bg-light-subtle d-flex flex-column gap-3">
+                    <form method="post" action="{{ url_for('main.regular_meal_update_settings', group_id=group.id, meal_id=rm.id) }}"
+                          class="d-flex align-items-end gap-2 flex-wrap">
+                      <div class="form-check me-2 mb-1">
+                        <input class="form-check-input" type="checkbox" id="autoInvite{{ rm.id }}" name="auto_invite_enabled" value="1" {% if rm.auto_invite_enabled %}checked{% endif %}>
+                        <label class="form-check-label small" for="autoInvite{{ rm.id }}">Create proposal and invite automatically</label>
+                      </div>
+                      <div>
+                        <label class="form-label form-label-sm mb-1">Days before</label>
+                        <input type="number" name="invite_days_before" class="form-control form-control-sm" value="{{ rm.invite_days_before }}" min="0" max="30" style="width:90px;">
+                      </div>
+                      <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
+                    </form>
+                    {% if rm.week_of_month <= -2 %}
+                      <form method="post" action="{{ url_for('main.regular_meal_shift', group_id=group.id, meal_id=rm.id) }}"
+                            class="d-flex align-items-end gap-2 flex-wrap">
+                        <div>
+                          <label class="form-label form-label-sm mb-1">Shift by weeks</label>
+                          <input type="number" name="shift_weeks" class="form-control form-control-sm" value="1" step="1" min="-52" max="52" style="width:90px;">
+                        </div>
+                        <button type="submit" class="btn btn-sm btn-outline-primary">Apply</button>
+                      </form>
+                    {% endif %}
+                  </div>
                 </div>
               {% endif %}
             </li>
@@ -332,6 +351,14 @@
             <div class="col-12 col-sm-4 d-none" id="regularMealFirstAppointmentCol">
               <label class="form-label form-label-sm mb-1">First appointment</label>
               <input type="date" name="first_appointment" id="regularMealFirstAppointment" class="form-control form-control-sm">
+            </div>
+            <div class="col-12 col-sm-4">
+              <div class="form-check mb-1">
+                <input class="form-check-input" type="checkbox" name="auto_invite_enabled" value="1" id="regularMealAutoInvite">
+                <label class="form-check-label small" for="regularMealAutoInvite">Create proposal and invite automatically</label>
+              </div>
+              <label class="form-label form-label-sm mb-1">Days before</label>
+              <input type="number" name="invite_days_before" class="form-control form-control-sm" value="3" min="0" max="30">
             </div>
             <div class="col-6 col-sm-1 d-flex align-items-end">
               <button type="submit" class="btn btn-sm btn-primary w-100">Add</button>

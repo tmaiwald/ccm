@@ -274,7 +274,39 @@
       });
     }
 
+    window.ccmLocalizeTimestamps = function(root) {
+      const scope = root || document;
+      scope.querySelectorAll('[data-utc-datetime]').forEach(function(node) {
+        const raw = node.getAttribute('data-utc-datetime');
+        if (!raw) return;
+        const parsed = new Date(raw);
+        if (Number.isNaN(parsed.getTime())) return;
+        node.textContent = new Intl.DateTimeFormat(undefined, {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit'
+        }).format(parsed);
+      });
+    };
+
     document.addEventListener('DOMContentLoaded', function() {
+      window.ccmLocalizeTimestamps(document);
+      const observer = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+          mutation.addedNodes.forEach(function(node) {
+            if (node.nodeType !== 1) return;
+            if (node.hasAttribute && node.hasAttribute('data-utc-datetime')) {
+              window.ccmLocalizeTimestamps(node.parentNode || document);
+            } else if (node.querySelectorAll) {
+              window.ccmLocalizeTimestamps(node);
+            }
+          });
+        });
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+
       const hint = document.getElementById('notificationHint');
       if (!hint) return;
 

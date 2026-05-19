@@ -4,6 +4,9 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager
 from flask_migrate import Migrate
 from sqlalchemy import inspect, text
+import click
+from flask.cli import with_appcontext
+from datetime import timezone
 
 db = SQLAlchemy()
 login_manager = LoginManager()
@@ -26,6 +29,25 @@ def _ensure_runtime_schema(engine):
     if inspector.has_table('proposal'):
         _ensure_column(engine, 'proposal', 'proposal_type', "VARCHAR(20) NOT NULL DEFAULT 'meal'")
         _ensure_column(engine, 'proposal', 'title', 'VARCHAR(150)')
+    if inspector.has_table('regular_meal'):
+        _ensure_column(engine, 'regular_meal', 'auto_invite_enabled', 'BOOLEAN NOT NULL DEFAULT 0')
+        _ensure_column(engine, 'regular_meal', 'invite_days_before', 'INTEGER NOT NULL DEFAULT 3')
+    if not inspector.has_table('regular_meal_occurrence'):
+        with engine.begin() as connection:
+            connection.execute(text(
+                'CREATE TABLE regular_meal_occurrence ('
+                'id INTEGER NOT NULL PRIMARY KEY, '
+                'regular_meal_id INTEGER NOT NULL, '
+                'occurrence_date DATE NOT NULL, '
+                'proposal_id INTEGER, '
+                'auto_created BOOLEAN NOT NULL DEFAULT 0, '
+                'invited_at DATETIME, '
+                'created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, '
+                'UNIQUE(regular_meal_id, occurrence_date), '
+                'FOREIGN KEY(regular_meal_id) REFERENCES regular_meal (id), '
+                'FOREIGN KEY(proposal_id) REFERENCES proposal (id)'
+                ')'
+            ))
 
 
 def create_app():
@@ -54,11 +76,28 @@ def create_app():
         return Markup(_md.markdown(escaped, extensions=['nl2br']))
     app.jinja_env.filters['markdown'] = render_markdown
 
+    def utc_iso(value):
+        if value is None:
+            return ''
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        else:
+            value = value.astimezone(timezone.utc)
+        return value.isoformat().replace('+00:00', 'Z')
+    app.jinja_env.filters['utc_iso'] = utc_iso
+
     # register blueprints after db init to avoid context issues
     from .routes import main
     from .auth import auth as auth_bp
     app.register_blueprint(main)
     app.register_blueprint(auth_bp, url_prefix='/auth')
+
+    @app.cli.command('process-regular-meals')
+    @with_appcontext
+    def process_regular_meals_command():
+        from .routes import process_regular_meal_automation
+        processed = process_regular_meal_automation()
+        click.echo(f'Processed {processed} regular meal invitation(s).')
 
     with app.app_context():
         # import models before creating tables

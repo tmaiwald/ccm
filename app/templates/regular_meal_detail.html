@@ -36,6 +36,11 @@
             {% if rm.start_time %}
               <span class="badge bg-secondary">{{ rm.start_time.strftime('%H:%M') }}</span>
             {% endif %}
+            {% if rm.auto_invite_enabled %}
+              <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">
+                Auto invite {{ rm.invite_days_before }} day{% if rm.invite_days_before != 1 %}s{% endif %} before
+              </span>
+            {% endif %}
             {% if not rm.active %}
               <span class="badge bg-warning text-dark">paused</span>
             {% endif %}

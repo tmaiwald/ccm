@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory, jsonify
 from . import db
-from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal, RegularMealMessage, MealExpense, MealExpenseSplit, RecipeComment, LoginDomainBlocklist, AdminNotificationPreference, normalize_email_domain, is_email_domain_blacklisted
+from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal, RegularMealOccurrence, RegularMealMessage, MealExpense, MealExpenseSplit, RecipeComment, LoginDomainBlocklist, AdminNotificationPreference, normalize_email_domain, is_email_domain_blacklisted
 from flask_login import current_user, login_required
 from datetime import date, timedelta, time
 from calendar import monthrange
@@ -200,6 +200,126 @@ def _notify_regular_meal(group, rm, actor, action='added'):
             f"</body></html>"
         )
         send_mail(mail_subject, text_body, mail_recipients, html_body)
+
+
+def _regular_meal_due_occurrence(rm, today=None):
+    today = today or date.today()
+    lead_days = max(int(getattr(rm, 'invite_days_before', 3) or 0), 0)
+    for occurrence_date in _upcoming_dates(rm, today, count=max(lead_days + 4, 8)):
+        if occurrence_date < today:
+            continue
+        if today >= occurrence_date - timedelta(days=lead_days):
+            return occurrence_date
+    return None
+
+
+def _ensure_regular_meal_proposal(rm, occurrence_date):
+    proposal = Proposal.query.filter_by(date=occurrence_date, recipe_id=rm.recipe_id).first()
+    if proposal:
+        return proposal, False
+
+    proposal = Proposal(
+        date=occurrence_date,
+        recipe_id=rm.recipe_id,
+        proposer_id=rm.created_by_id,
+        start_time=rm.start_time,
+        proposal_type='meal',
+    )
+    db.session.add(proposal)
+    db.session.flush()
+    return proposal, True
+
+
+def _notify_regular_meal_invitation(group, rm, proposal, occurrence_date, auto_created=False):
+    cfg = MailConfig.query.first()
+    host = cfg.site_host.strip() if cfg and cfg.site_host else 'https://ccm-m.aiwald.de'
+    discussion_path = url_for('main.proposal_discuss', proposal_id=proposal.id)
+    full_url = f"{host.rstrip('/')}{discussion_path}"
+    label = _regular_meal_label(rm)
+    recipe_title = rm.recipe.title if rm.recipe else '?'
+    occurrence_label = occurrence_date.strftime('%A, %d.%m.%Y')
+    title = f"Regular meal invitation in {group.name}"
+    push_body = f"{recipe_title} on {occurrence_label} · {label}"
+    mail_subject = f"[{group.name}] Upcoming regular meal: {recipe_title}"
+    auto_text = 'A meal proposal was created automatically.' if auto_created else 'A meal proposal is ready.'
+
+    mail_recipients = []
+    targets = []
+    for membership in group.memberships:
+        targets.append(membership.user)
+        if membership.notify_mail and membership.user.email:
+            mail_recipients.append(membership.user.email)
+
+    for user in targets:
+        membership = next((m for m in group.memberships if m.user_id == user.id), None)
+        if membership and membership.notify_push:
+            send_web_push_to_user(user, title, push_body, url=discussion_path)
+
+    if mail_recipients:
+        text_body = (
+            f"Hello,\n\n"
+            f"{auto_text}\n\n"
+            f"Group: {group.name}\n"
+            f"Meal: {recipe_title}\n"
+            f"When: {occurrence_label}\n"
+            f"Schedule: {label}\n"
+            f"Time: {rm.start_time.strftime('%H:%M') if rm.start_time else '12:00'}\n\n"
+            f"Open the proposal: {full_url}\n\n"
+            f"Best regards,\nCleverly Connected Meals"
+        )
+        html_body = (
+            f"<html><body>"
+            f"<p>{auto_text}</p>"
+            f"<p style='background:#f5f5f5;padding:0.7em 1em;border-radius:6px;'>"
+            f"<strong>{recipe_title}</strong><br>"
+            f"{occurrence_label}<br>"
+            f"{label}<br>"
+            f"{rm.start_time.strftime('%H:%M') if rm.start_time else '12:00'}"
+            f"</p>"
+            f"<p><a href='{full_url}'>Open proposal</a></p>"
+            f"</body></html>"
+        )
+        send_mail(mail_subject, text_body, mail_recipients, html_body)
+
+
+def process_regular_meal_automation(now=None):
+    now = now or datetime.utcnow()
+    today = now.date()
+    processed = 0
+
+    meals = RegularMeal.query.filter_by(active=True, auto_invite_enabled=True).all()
+    for rm in meals:
+        occurrence_date = _regular_meal_due_occurrence(rm, today=today)
+        if not occurrence_date:
+            continue
+
+        occurrence = RegularMealOccurrence.query.filter_by(
+            regular_meal_id=rm.id,
+            occurrence_date=occurrence_date,
+        ).first()
+        if occurrence and occurrence.invited_at:
+            continue
+
+        proposal, auto_created = _ensure_regular_meal_proposal(rm, occurrence_date)
+        group = rm.group
+
+        if not occurrence:
+            occurrence = RegularMealOccurrence(
+                regular_meal_id=rm.id,
+                occurrence_date=occurrence_date,
+            )
+            db.session.add(occurrence)
+
+        occurrence.proposal_id = proposal.id
+        occurrence.auto_created = auto_created
+        occurrence.invited_at = now
+
+        _notify_regular_meal_invitation(group, rm, proposal, occurrence_date, auto_created=auto_created)
+        processed += 1
+
+    if processed:
+        db.session.commit()
+    return processed
 
 
 def _compute_settlement(expenses):
@@ -2487,8 +2607,15 @@ def regular_meal_add(group_id):
     day_of_week = request.form.get('day_of_week', type=int)
     start_time_str = (request.form.get('start_time') or '').strip()
     first_appointment_str = (request.form.get('first_appointment') or '').strip()
+    auto_invite_enabled = bool(request.form.get('auto_invite_enabled'))
+    invite_days_before = request.form.get('invite_days_before', type=int)
     if not recipe_id or week_of_month not in (0, 1, 2, 3, 4, -1, -2, -3, -4, -5) or day_of_week not in range(7):
         flash('Invalid regular meal settings', 'warning')
+        return redirect(url_for('main.group_detail', group_id=group_id))
+    if invite_days_before is None:
+        invite_days_before = 3
+    if invite_days_before < 0 or invite_days_before > 30:
+        flash('Invitation lead time must be between 0 and 30 days', 'warning')
         return redirect(url_for('main.group_detail', group_id=group_id))
     from datetime import time as _time
     start_time = None
@@ -2513,13 +2640,41 @@ def regular_meal_add(group_id):
             return redirect(url_for('main.group_detail', group_id=group_id))
     rm = RegularMeal(group_id=group_id, recipe_id=recipe_id,
                      week_of_month=week_of_month, day_of_week=day_of_week,
-                     start_time=start_time, created_by_id=current_user.id)
+                     start_time=start_time, created_by_id=current_user.id,
+                     auto_invite_enabled=auto_invite_enabled,
+                     invite_days_before=invite_days_before)
     if first_appointment is not None:
         _set_interval_anchor(rm, first_appointment)
     db.session.add(rm)
     db.session.commit()
     _notify_regular_meal(grp, rm, current_user, action='added')
     flash('Regular meal added', 'success')
+    return redirect(url_for('main.group_detail', group_id=group_id))
+
+
+@main.route('/groups/<int:group_id>/regular_meals/<int:meal_id>/settings', methods=['POST'])
+@login_required
+def regular_meal_update_settings(group_id, meal_id):
+    rm = RegularMeal.query.get_or_404(meal_id)
+    if rm.group_id != group_id:
+        return redirect(url_for('main.group_detail', group_id=group_id))
+    grp = Group.query.get_or_404(group_id)
+    membership = GroupMembership.query.filter_by(user_id=current_user.id, group_id=group_id).first()
+    if not (membership and (rm.created_by_id == current_user.id or grp.creator_id == current_user.id or current_user.is_admin)):
+        flash('No permission', 'warning')
+        return redirect(url_for('main.group_detail', group_id=group_id))
+
+    invite_days_before = request.form.get('invite_days_before', type=int)
+    if invite_days_before is None:
+        invite_days_before = 3
+    if invite_days_before < 0 or invite_days_before > 30:
+        flash('Invitation lead time must be between 0 and 30 days', 'warning')
+        return redirect(url_for('main.group_detail', group_id=group_id))
+
+    rm.auto_invite_enabled = bool(request.form.get('auto_invite_enabled'))
+    rm.invite_days_before = invite_days_before
+    db.session.commit()
+    flash('Regular meal automation settings updated', 'success')
     return redirect(url_for('main.group_detail', group_id=group_id))
 
 
