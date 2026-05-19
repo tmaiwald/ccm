@@ -59,6 +59,12 @@ def _interval_anchor(rm):
     delta = (rm.day_of_week - base.weekday()) % 7
     return base + _td(days=delta)
 
+
+def _set_interval_anchor(rm, anchor_date):
+    """Persist an every-N-weeks anchor by aligning created_at to the chosen first occurrence date."""
+    anchor_time = rm.start_time or time(12, 0)
+    rm.created_at = datetime.combine(anchor_date, anchor_time)
+
 def _is_occurrence(rm, d):
     """Return True if date d is an occurrence of RegularMeal rm."""
     from datetime import timedelta as _td
@@ -150,6 +156,12 @@ def _notify_regular_meal(group, rm, actor, action='added'):
         mail_subject = f"[{group.name}] New regular meal: {recipe_title}"
         mail_intro = f"<strong>{actor.username}</strong> added a new regular meal to the group <strong>{group.name}</strong>:"
         text_intro = f"{actor.username} added a new regular meal to the group \"{group.name}\":"
+    elif action == 'shifted':
+        title = f"Regular meal schedule updated in {group.name}"
+        push_body = f"{actor.username} shifted \"{recipe_title}\" — {label}"
+        mail_subject = f"[{group.name}] Regular meal schedule updated: {recipe_title}"
+        mail_intro = f"<strong>{actor.username}</strong> shifted the schedule for <strong>{recipe_title}</strong> in <strong>{group.name}</strong>:"
+        text_intro = f"{actor.username} shifted the schedule for \"{recipe_title}\" in \"{group.name}\":"
     else:
         status = 'activated' if rm.active else 'paused'
         title = f"Regular meal {status} in {group.name}"
@@ -161,6 +173,8 @@ def _notify_regular_meal(group, rm, actor, action='added'):
     detail_line = f"{recipe_title} · {label}"
     if rm.start_time:
         detail_line += f" · {rm.start_time.strftime('%H:%M')}"
+    if rm.week_of_month <= -2:
+        detail_line += f" · First appointment: {_interval_anchor(rm).strftime('%d/%m/%y')}"
 
     mail_recipients = []
     for membership in group.memberships:
@@ -2367,6 +2381,7 @@ def regular_meal_add(group_id):
     week_of_month = request.form.get('week_of_month', type=int)
     day_of_week = request.form.get('day_of_week', type=int)
     start_time_str = (request.form.get('start_time') or '').strip()
+    first_appointment_str = (request.form.get('first_appointment') or '').strip()
     if not recipe_id or week_of_month not in (0, 1, 2, 3, 4, -1, -2, -3, -4, -5) or day_of_week not in range(7):
         flash('Invalid regular meal settings', 'warning')
         return redirect(url_for('main.group_detail', group_id=group_id))
@@ -2378,13 +2393,56 @@ def regular_meal_add(group_id):
             start_time = _time(int(h), int(m))
         except Exception:
             pass
+    first_appointment = None
+    if week_of_month <= -2:
+        if not first_appointment_str:
+            flash('Choose the first appointment for every-N-weeks regular meals', 'warning')
+            return redirect(url_for('main.group_detail', group_id=group_id))
+        try:
+            first_appointment = date.fromisoformat(first_appointment_str)
+        except ValueError:
+            flash('Invalid first appointment date', 'warning')
+            return redirect(url_for('main.group_detail', group_id=group_id))
+        if first_appointment.weekday() != day_of_week:
+            flash('The first appointment must match the selected weekday', 'warning')
+            return redirect(url_for('main.group_detail', group_id=group_id))
     rm = RegularMeal(group_id=group_id, recipe_id=recipe_id,
                      week_of_month=week_of_month, day_of_week=day_of_week,
                      start_time=start_time, created_by_id=current_user.id)
+    if first_appointment is not None:
+        _set_interval_anchor(rm, first_appointment)
     db.session.add(rm)
     db.session.commit()
     _notify_regular_meal(grp, rm, current_user, action='added')
     flash('Regular meal added', 'success')
+    return redirect(url_for('main.group_detail', group_id=group_id))
+
+
+@main.route('/groups/<int:group_id>/regular_meals/<int:meal_id>/shift', methods=['POST'])
+@login_required
+def regular_meal_shift(group_id, meal_id):
+    rm = RegularMeal.query.get_or_404(meal_id)
+    if rm.group_id != group_id:
+        return redirect(url_for('main.group_detail', group_id=group_id))
+    membership = GroupMembership.query.filter_by(user_id=current_user.id, group_id=group_id).first()
+    grp = Group.query.get_or_404(group_id)
+    if not membership:
+        flash('Join the group first', 'warning')
+        return redirect(url_for('main.group_detail', group_id=group_id))
+    if rm.week_of_month > -2:
+        flash('Only every-N-weeks regular meals can be shifted by weeks', 'warning')
+        return redirect(url_for('main.group_detail', group_id=group_id))
+
+    shift_weeks = request.form.get('shift_weeks', type=int)
+    if shift_weeks is None or shift_weeks == 0:
+        flash('Enter a non-zero number of weeks to shift the schedule', 'warning')
+        return redirect(url_for('main.group_detail', group_id=group_id))
+
+    new_anchor = _interval_anchor(rm) + timedelta(weeks=shift_weeks)
+    _set_interval_anchor(rm, new_anchor)
+    db.session.commit()
+    _notify_regular_meal(grp, rm, current_user, action='shifted')
+    flash(f'Regular meal shifted by {shift_weeks} week(s)', 'success')
     return redirect(url_for('main.group_detail', group_id=group_id))
 
 
@@ -2546,11 +2604,13 @@ def group_detail(group_id):
     regular_meals = RegularMeal.query.filter_by(group_id=group_id).order_by(RegularMeal.created_at.asc()).all()
     today = date.today()
     regular_meals_upcoming = {rm.id: _upcoming_dates(rm, today, count=6) for rm in regular_meals}
+    regular_meals_anchor = {rm.id: _interval_anchor(rm) for rm in regular_meals if rm.week_of_month <= -2}
     recipes_all = Recipe.query.order_by(Recipe.title.asc()).all()
     return render_template('group_detail.html', group=grp, messages=messages, membership=membership,
                            reactions=reactions, my_reactions=my_reactions,
                            regular_meals=regular_meals,
                            regular_meals_upcoming=regular_meals_upcoming,
+                           regular_meals_anchor=regular_meals_anchor,
                            recipes_all=recipes_all)
 
 

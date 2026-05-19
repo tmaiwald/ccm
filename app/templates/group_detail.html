@@ -221,12 +221,26 @@
                     </span>
                   </div>
                   {% set upcoming = regular_meals_upcoming.get(rm.id, []) %}
+                  {% set anchor = regular_meals_anchor.get(rm.id) %}
                   {% if upcoming %}
                     <div class="mt-1 d-flex flex-wrap gap-1">
                       {% for d in upcoming %}
                         <span class="badge {% if rm.active %}bg-info text-dark{% else %}bg-secondary{% endif %}" style="font-size:.7rem;">{{ d.strftime('%d/%m/%y') }}</span>
                       {% endfor %}
                     </div>
+                  {% endif %}
+                  {% if anchor %}
+                    <div class="mt-1 small text-muted">First appointment: {{ anchor.strftime('%d/%m/%y') }}</div>
+                  {% endif %}
+                  {% if membership and rm.week_of_month <= -2 %}
+                    <form method="post" action="{{ url_for('main.regular_meal_shift', group_id=group.id, meal_id=rm.id) }}"
+                          class="d-flex align-items-end gap-2 flex-wrap mt-2">
+                      <div>
+                        <label class="form-label form-label-sm mb-1">Shift by weeks</label>
+                        <input type="number" name="shift_weeks" class="form-control form-control-sm" value="1" step="1" min="-52" max="52" style="width:90px;">
+                      </div>
+                      <button type="submit" class="btn btn-sm btn-outline-primary">Shift</button>
+                    </form>
                   {% endif %}
                 </div>
                 {% if membership and (rm.created_by_id == current_user.id or group.creator_id == current_user.id or current_user.is_admin) %}
@@ -301,6 +315,10 @@
             <div class="col-6 col-sm-1">
               <label class="form-label form-label-sm mb-1">Time</label>
               <input type="time" name="start_time" class="form-control form-control-sm">
+            </div>
+            <div class="col-12 col-sm-4 d-none" id="regularMealFirstAppointmentCol">
+              <label class="form-label form-label-sm mb-1">First appointment</label>
+              <input type="date" name="first_appointment" id="regularMealFirstAppointment" class="form-control form-control-sm">
             </div>
             <div class="col-6 col-sm-1 d-flex align-items-end">
               <button type="submit" class="btn btn-sm btn-primary w-100">Add</button>
@@ -555,6 +573,23 @@ document.addEventListener('DOMContentLoaded', function () {
   if (rmc && rmch) {
     rmc.addEventListener('show.bs.collapse', function () { rmch.textContent = 'expand_less'; });
     rmc.addEventListener('hide.bs.collapse', function () { rmch.textContent = 'expand_more'; });
+  }
+  var regularMealFrequency = document.querySelector('select[name="week_of_month"]');
+  var firstAppointmentCol = document.getElementById('regularMealFirstAppointmentCol');
+  var firstAppointmentInput = document.getElementById('regularMealFirstAppointment');
+  function updateRegularMealFirstAppointment() {
+    if (!regularMealFrequency || !firstAppointmentCol || !firstAppointmentInput) return;
+    var value = parseInt(regularMealFrequency.value, 10);
+    var needsFirstAppointment = value <= -2;
+    firstAppointmentCol.classList.toggle('d-none', !needsFirstAppointment);
+    firstAppointmentInput.required = needsFirstAppointment;
+    if (!needsFirstAppointment) {
+      firstAppointmentInput.value = '';
+    }
+  }
+  if (regularMealFrequency) {
+    regularMealFrequency.addEventListener('change', updateRegularMealFirstAppointment);
+    updateRegularMealFirstAppointment();
   }
 });
 (function () {
