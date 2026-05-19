@@ -110,6 +110,21 @@
         <div class="alert alert-danger">Mail service not set up correctly</div>
       {% endif %}
 
+      {% if current_user.is_authenticated and request.endpoint != 'main.profile' %}
+        <div id="notificationHint"
+             class="alert alert-warning alert-dismissible fade show d-none"
+             role="alert"
+             data-has-push-subscription="{{ 1 if current_user.push_subscriptions|length else 0 }}"
+             data-has-email="{{ 1 if current_user.email else 0 }}"
+             data-notify-enabled="{{ 1 if current_user.notify_new_proposal or current_user.notify_discussion or current_user.notify_broadcast else 0 }}"
+             data-mail-available="{{ 1 if g.get('mail_ok', False) else 0 }}">
+          <strong>Notifications are not fully active.</strong>
+          <span id="notificationHintText">Open your notification settings to enable updates.</span>
+          <a href="{{ url_for('main.profile', user_id=current_user.id) }}" class="alert-link ms-1">Open settings</a>
+          <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div>
+      {% endif %}
+
       {% block flash %}
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
@@ -258,6 +273,51 @@
         }
       });
     }
+
+    document.addEventListener('DOMContentLoaded', function() {
+      const hint = document.getElementById('notificationHint');
+      if (!hint) return;
+
+      const dismissKey = 'ccm-notification-hint-dismissed-v1';
+      const dismissedAt = parseInt(window.localStorage.getItem(dismissKey) || '0', 10);
+      const dismissForMs = 7 * 24 * 60 * 60 * 1000;
+      if (dismissedAt && (Date.now() - dismissedAt) < dismissForMs) {
+        return;
+      }
+
+      const hintText = document.getElementById('notificationHintText');
+      const hasPushSubscription = hint.dataset.hasPushSubscription === '1';
+      const hasEmail = hint.dataset.hasEmail === '1';
+      const notifyEnabled = hint.dataset.notifyEnabled === '1';
+      const mailAvailable = hint.dataset.mailAvailable === '1';
+
+      function showHint(text) {
+        if (hintText) {
+          hintText.textContent = text;
+        }
+        hint.classList.remove('d-none');
+      }
+
+      if (!notifyEnabled) {
+        showHint('Your notification preferences are currently switched off.');
+      } else if ('Notification' in window && 'serviceWorker' in navigator) {
+        if (Notification.permission === 'denied') {
+          showHint(hasEmail && mailAvailable
+            ? 'Push notifications are blocked on this device. You can still turn them on in the browser settings.'
+            : 'Push notifications are blocked and no email notification fallback is configured for your account.');
+        } else if (Notification.permission !== 'granted' || !hasPushSubscription) {
+          showHint(hasEmail && mailAvailable
+            ? 'Enable push notifications on this device for faster updates.'
+            : 'Enable push notifications or add an email address so you can receive updates.');
+        }
+      } else if (!hasEmail || !mailAvailable) {
+        showHint('This browser cannot use push notifications here, so add an email address if you want to receive updates.');
+      }
+
+      hint.addEventListener('closed.bs.alert', function() {
+        window.localStorage.setItem(dismissKey, String(Date.now()));
+      });
+    });
    </script>
   </body>
 </html>
