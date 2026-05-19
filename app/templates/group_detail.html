@@ -233,14 +233,27 @@
                     <div class="mt-1 small text-muted">First appointment: {{ anchor.strftime('%d/%m/%y') }}</div>
                   {% endif %}
                   {% if membership and rm.week_of_month <= -2 %}
-                    <form method="post" action="{{ url_for('main.regular_meal_shift', group_id=group.id, meal_id=rm.id) }}"
-                          class="d-flex align-items-end gap-2 flex-wrap mt-2">
-                      <div>
-                        <label class="form-label form-label-sm mb-1">Shift by weeks</label>
-                        <input type="number" name="shift_weeks" class="form-control form-control-sm" value="1" step="1" min="-52" max="52" style="width:90px;">
+                    <div class="mt-2">
+                      <button class="btn btn-sm btn-outline-secondary"
+                              type="button"
+                              data-bs-toggle="collapse"
+                              data-bs-target="#regularMealShift{{ rm.id }}"
+                              aria-expanded="false"
+                              aria-controls="regularMealShift{{ rm.id }}"
+                              title="Schedule settings">
+                        <span class="material-icons" style="font-size:14px;vertical-align:middle;">build</span>
+                      </button>
+                      <div class="collapse mt-2" id="regularMealShift{{ rm.id }}">
+                        <form method="post" action="{{ url_for('main.regular_meal_shift', group_id=group.id, meal_id=rm.id) }}"
+                              class="d-flex align-items-end gap-2 flex-wrap">
+                          <div>
+                            <label class="form-label form-label-sm mb-1">Shift by weeks</label>
+                            <input type="number" name="shift_weeks" class="form-control form-control-sm" value="1" step="1" min="-52" max="52" style="width:90px;">
+                          </div>
+                          <button type="submit" class="btn btn-sm btn-outline-primary">Apply</button>
+                        </form>
                       </div>
-                      <button type="submit" class="btn btn-sm btn-outline-primary">Shift</button>
-                    </form>
+                    </div>
                   {% endif %}
                 </div>
                 {% if membership and (rm.created_by_id == current_user.id or group.creator_id == current_user.id or current_user.is_admin) %}
