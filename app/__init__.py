@@ -6,7 +6,7 @@ from flask_migrate import Migrate
 from sqlalchemy import inspect, text
 import click
 from flask.cli import with_appcontext
-from datetime import timezone
+from datetime import date, timedelta, timezone
 
 db = SQLAlchemy()
 login_manager = LoginManager()
@@ -98,6 +98,66 @@ def create_app():
         from .routes import process_regular_meal_automation
         processed = process_regular_meal_automation()
         click.echo(f'Processed {processed} regular meal invitation(s).')
+
+    @app.cli.command('list-regular-meal-notifications')
+    @click.option('--days', default=21, show_default=True, type=int)
+    @with_appcontext
+    def list_regular_meal_notifications_command(days):
+        if days < 0:
+            raise click.BadParameter('must be non-negative', param_hint='days')
+
+        from .models import Proposal, RegularMeal, RegularMealOccurrence
+        from .routes import _upcoming_dates
+
+        today = date.today()
+        horizon = today + timedelta(days=days)
+        rows = []
+
+        meals = (RegularMeal.query
+                .filter_by(active=True, auto_invite_enabled=True)
+                .order_by(RegularMeal.group_id.asc(), RegularMeal.id.asc())
+                .all())
+
+        for rm in meals:
+            lead_days = max(int(rm.invite_days_before or 0), 0)
+            count = max(days + lead_days + 2, 8)
+            for occurrence_date in _upcoming_dates(rm, today, count=count):
+                notify_on = occurrence_date - timedelta(days=lead_days)
+                if notify_on > horizon:
+                    break
+
+                occurrence = RegularMealOccurrence.query.filter_by(
+                    regular_meal_id=rm.id,
+                    occurrence_date=occurrence_date,
+                ).first()
+                proposal = Proposal.query.filter_by(date=occurrence_date, recipe_id=rm.recipe_id).first()
+
+                if occurrence and occurrence.invited_at:
+                    status = 'sent'
+                elif notify_on <= today:
+                    status = 'due'
+                else:
+                    status = 'scheduled'
+
+                rows.append({
+                    'group': rm.group.name,
+                    'meal': rm.recipe.title if rm.recipe else '?',
+                    'notify_on': notify_on.isoformat(),
+                    'occurs_on': occurrence_date.isoformat(),
+                    'status': status,
+                    'proposal_id': proposal.id if proposal else '-',
+                })
+
+        click.echo(f'Regular meal notifications from {today.isoformat()} to {horizon.isoformat()}')
+        if not rows:
+            click.echo('No upcoming notifications found.')
+            return
+
+        for row in rows:
+            click.echo(
+                f"[{row['status']}] {row['notify_on']} -> {row['occurs_on']} | "
+                f"{row['group']} | {row['meal']} | proposal {row['proposal_id']}"
+            )
 
     with app.app_context():
         # import models before creating tables
