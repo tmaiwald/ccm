@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory, jsonify
+from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory, jsonify, has_request_context
 from . import db
 from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal, RegularMealOccurrence, RegularMealMessage, MealExpense, MealExpenseSplit, RecipeComment, LoginDomainBlocklist, AdminNotificationPreference, AppErrorLog, QueuedAdminNotification, normalize_email_domain, is_email_domain_blacklisted
 from flask_login import current_user, login_required
@@ -234,7 +234,7 @@ def _ensure_regular_meal_proposal(rm, occurrence_date):
 def _notify_regular_meal_invitation(group, rm, proposal, occurrence_date, auto_created=False):
     cfg = MailConfig.query.first()
     host = cfg.site_host.strip() if cfg and cfg.site_host else 'https://ccm-m.aiwald.de'
-    discussion_path = url_for('main.proposal_discuss', proposal_id=proposal.id)
+    discussion_path = build_app_url('main.proposal_discuss', proposal_id=proposal.id)
     full_url = f"{host.rstrip('/')}{discussion_path}"
     label = _regular_meal_label(rm)
     recipe_title = rm.recipe.title if rm.recipe else '?'
@@ -427,6 +427,15 @@ def record_app_error(source, message, exc=None, context=None):
         db.session.commit()
     except Exception:
         db.session.rollback()
+
+
+def build_app_url(endpoint, **values):
+    if has_request_context():
+        return url_for(endpoint, **values)
+    cfg = MailConfig.query.first()
+    base_url = cfg.site_host.strip() if cfg and cfg.site_host else 'https://ccm-m.aiwald.de'
+    with current_app.test_request_context(base_url=base_url):
+        return url_for(endpoint, **values)
 
 
 def make_upload_filename(original_filename, username):
