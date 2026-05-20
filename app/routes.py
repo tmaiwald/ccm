@@ -1471,17 +1471,37 @@ def delete_proposal(proposal_id):
         return redirect(url_for('main.calendar_view'))
     # prepare info before deletion
     pdate = p.date
+    proposal_title = proposal_subject_label(p)
+    proposal_kind = proposal_action_label(p)
+    short_date = pdate.strftime('%d.%m')
+    calendar_url = url_for('main.calendar_view')
     notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id]
     recipients = [u.email for u in notify_parts if u.email]
+
+    subject = f"{current_user.username} removed the proposal | {proposal_title} | {short_date}"
+    text_body = (
+        f"Hello,\n\n"
+        f"{current_user.username} removed the {proposal_kind} \"{proposal_title}\" on {short_date}.\n\n"
+        f"The proposal was removed by {current_user.username}.\n\n"
+        f"Open the calendar here: {build_app_url('main.calendar_view')}\n\n"
+        f"Best regards,\n"
+        f"Cleverly Connected Meals (CCM)"
+    )
+    html_body = (
+        f"<html><body>"
+        f"<p><strong>{current_user.username}</strong> removed the {proposal_kind} <strong>{proposal_title}</strong> on {short_date}.</p>"
+        f"<p>The proposal was removed by {current_user.username}.</p>"
+        f"<p><a href='{build_app_url('main.calendar_view')}'>Open calendar</a></p>"
+        f"</body></html>"
+    )
+
     db.session.delete(p)
     db.session.commit()
-    flash(f'{proposal_subject_label(p)} removed', 'success')
-    subj, text_body, html_body = make_proposal_mail(p, 'removed the proposal', current_user.username, extra_text=f'The proposal was removed by {current_user.username}.')
+    flash(f'{proposal_title} removed', 'success')
     if recipients:
-        send_mail(subj, text_body, recipients, html_body)
-    discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
+        send_mail(subject, text_body, recipients, html_body)
     for u in notify_parts:
-        send_web_push_to_user(u, subj, f'{current_user.username} removed the {proposal_action_label(p)}', url=discuss_url)
+        send_web_push_to_user(u, subject, f'{current_user.username} removed the {proposal_kind}', url=calendar_url)
     return redirect(url_for('main.calendar_view', year=pdate.year, month=pdate.month))
 
 
