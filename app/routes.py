@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory, jsonify
 from . import db
-from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal, RegularMealOccurrence, RegularMealMessage, MealExpense, MealExpenseSplit, RecipeComment, LoginDomainBlocklist, AdminNotificationPreference, normalize_email_domain, is_email_domain_blacklisted
+from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal, RegularMealOccurrence, RegularMealMessage, MealExpense, MealExpenseSplit, RecipeComment, LoginDomainBlocklist, AdminNotificationPreference, AppErrorLog, QueuedAdminNotification, normalize_email_domain, is_email_domain_blacklisted
 from flask_login import current_user, login_required
 from datetime import date, timedelta, time
 from calendar import monthrange
@@ -22,6 +22,7 @@ from PIL import Image
 import io
 import uuid
 from datetime import datetime
+import traceback
 
 main = Blueprint("main", __name__)
 
@@ -289,36 +290,61 @@ def process_regular_meal_automation(now=None):
 
     meals = RegularMeal.query.filter_by(active=True, auto_invite_enabled=True).all()
     for rm in meals:
-        occurrence_date = _regular_meal_due_occurrence(rm, today=today)
-        if not occurrence_date:
-            continue
+        try:
+            occurrence_date = _regular_meal_due_occurrence(rm, today=today)
+            if not occurrence_date:
+                continue
 
-        occurrence = RegularMealOccurrence.query.filter_by(
-            regular_meal_id=rm.id,
-            occurrence_date=occurrence_date,
-        ).first()
-        if occurrence and occurrence.invited_at:
-            continue
-
-        proposal, auto_created = _ensure_regular_meal_proposal(rm, occurrence_date)
-        group = rm.group
-
-        if not occurrence:
-            occurrence = RegularMealOccurrence(
+            occurrence = RegularMealOccurrence.query.filter_by(
                 regular_meal_id=rm.id,
                 occurrence_date=occurrence_date,
-            )
-            db.session.add(occurrence)
+            ).first()
+            if occurrence and occurrence.invited_at:
+                continue
 
-        occurrence.proposal_id = proposal.id
-        occurrence.auto_created = auto_created
-        occurrence.invited_at = now
+            proposal, auto_created = _ensure_regular_meal_proposal(rm, occurrence_date)
+            group = rm.group
 
-        _notify_regular_meal_invitation(group, rm, proposal, occurrence_date, auto_created=auto_created)
-        processed += 1
+            if not occurrence:
+                occurrence = RegularMealOccurrence(
+                    regular_meal_id=rm.id,
+                    occurrence_date=occurrence_date,
+                )
+                db.session.add(occurrence)
 
-    if processed:
-        db.session.commit()
+            occurrence.proposal_id = proposal.id
+            occurrence.auto_created = auto_created
+            occurrence.invited_at = now
+
+            _notify_regular_meal_invitation(group, rm, proposal, occurrence_date, auto_created=auto_created)
+            db.session.commit()
+            processed += 1
+        except Exception as exc:
+            db.session.rollback()
+            current_app.logger.exception('Regular meal automation failed for meal %s', rm.id)
+            record_app_error('regular_meal.automation', f'Regular meal automation failed for meal {rm.id}: {exc}', exc=exc, context=f'regular_meal_id={rm.id}')
+
+    queued_notifications = (QueuedAdminNotification.query
+                            .filter(QueuedAdminNotification.sent_at == None,
+                                    QueuedAdminNotification.scheduled_for <= now)
+                            .order_by(QueuedAdminNotification.scheduled_for.asc())
+                            .all())
+    for queued in queued_notifications:
+        try:
+            target_user = queued.target_user
+            push_ok = send_web_push_to_user(target_user, queued.title, queued.body, url=queued.url)
+            mail_ok = False
+            if target_user and target_user.email:
+                mail_ok = send_mail(queued.title, queued.body, [target_user.email])
+            queued.sent_at = now
+            queued.delivery_summary = 'push and email' if push_ok and mail_ok else 'push' if push_ok else 'email' if mail_ok else 'no delivery channel succeeded'
+            db.session.commit()
+            processed += 1
+        except Exception as exc:
+            db.session.rollback()
+            current_app.logger.exception('Queued admin notification failed for notification %s', queued.id)
+            record_app_error('admin.test_notification', f'Queued admin notification failed for id {queued.id}: {exc}', exc=exc, context=f'queued_notification_id={queued.id}')
+
     return processed
 
 
@@ -387,6 +413,20 @@ def admin_required(f):
             return redirect(url_for('main.index'))
         return f(*args, **kwargs)
     return wrapper
+
+
+def record_app_error(source, message, exc=None, context=None):
+    try:
+        stack_trace = traceback.format_exc() if exc is not None else None
+        db.session.add(AppErrorLog(
+            source=source[:120],
+            message=(message or str(exc) or 'Unknown error')[:255],
+            stack_trace=stack_trace,
+            context=context,
+        ))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
 
 
 def make_upload_filename(original_filename, username):
@@ -565,6 +605,7 @@ def send_mail(subject, text_body, recipients, html_body=None):
         return True
     except Exception as e:
         current_app.logger.exception('Mail send failed: %s', e)
+        record_app_error('mail.send', f'Mail send failed: {e}', exc=e, context=f'subject={subject}; recipients={recipients}')
         return False
 
 
@@ -666,8 +707,10 @@ def send_web_push_to_user(user, title: str, body: str, url: str = '/'):
             if status in (404, 410):
                 stale.append(sub)
             current_app.logger.exception('Web push failed: %s', e)
+            record_app_error('push.send', f'Web push failed: {e}', exc=e, context=f'user_id={user.id}; endpoint={sub.endpoint}')
         except Exception as e:
             current_app.logger.exception('Web push failed: %s', e)
+            record_app_error('push.send', f'Web push failed: {e}', exc=e, context=f'user_id={user.id}; endpoint={sub.endpoint}')
     if stale:
         for s in stale:
             db.session.delete(s)
@@ -1774,6 +1817,13 @@ def admin_dashboard():
     users = User.query.order_by(User.username).all()
     cfg = MailConfig.query.first()
     blacklisted_domains = LoginDomainBlocklist.query.order_by(LoginDomainBlocklist.domain.asc()).all()
+    error_logs = AppErrorLog.query.order_by(AppErrorLog.created_at.desc(), AppErrorLog.id.desc()).limit(50).all()
+    queued_test_notifications = (QueuedAdminNotification.query
+                                 .order_by(QueuedAdminNotification.sent_at.is_(None).desc(),
+                                           QueuedAdminNotification.scheduled_for.asc(),
+                                           QueuedAdminNotification.id.desc())
+                                 .limit(50)
+                                 .all())
     admin_notification_preferences = {
         pref.user_id: pref.notify_new_user
         for pref in AdminNotificationPreference.query.all()
@@ -1817,6 +1867,8 @@ def admin_dashboard():
         push_stats_by_user_id=push_stats_by_user_id,
         push_subscribed_users=push_subscribed_users,
         total_push_subscriptions=total_push_subscriptions,
+        error_logs=error_logs,
+        queued_test_notifications=queued_test_notifications,
     )
 
 
@@ -1934,9 +1986,6 @@ def admin_test_notification_user():
     if not user:
         flash('User not found for that identifier', 'warning')
         return redirect(url_for('main.admin_dashboard'))
-    if not getattr(user, 'notify_broadcast', False):
-        flash('User disabled broadcast notifications', 'warning')
-        return redirect(url_for('main.admin_dashboard'))
 
     push_title = 'CCM test notification'
     push_body = f'This is a test notification triggered by admin {current_user.username}.'
@@ -1952,6 +2001,62 @@ def admin_test_notification_user():
         flash(f'Test notification sent to {user.username} (push{" and email" if mail_ok else ""})', 'success')
     else:
         flash('Failed to send test notification — check push/email settings and logs', 'danger')
+    return redirect(url_for('main.admin_dashboard'))
+
+
+@main.route('/admin/test_notification_user/schedule', methods=['POST'])
+@login_required
+@admin_required
+def admin_schedule_test_notification_user():
+    identifier = (request.form.get('user_identifier') or '').strip()
+    if not identifier:
+        flash('Provide a username or email to notify', 'warning')
+        return redirect(url_for('main.admin_dashboard'))
+
+    user = User.query.filter((User.username == identifier) | (User.email == identifier)).first()
+    if not user:
+        flash('User not found for that identifier', 'warning')
+        return redirect(url_for('main.admin_dashboard'))
+
+    scheduled_for_raw = (request.form.get('scheduled_for') or '').strip()
+    if not scheduled_for_raw:
+        flash('Provide a date and time for the test notification', 'warning')
+        return redirect(url_for('main.admin_dashboard'))
+
+    try:
+        scheduled_for_local = datetime.strptime(scheduled_for_raw, '%Y-%m-%dT%H:%M')
+        timezone_offset_minutes = int((request.form.get('timezone_offset_minutes') or '0').strip())
+    except ValueError:
+        flash('Invalid date/time for scheduled notification', 'warning')
+        return redirect(url_for('main.admin_dashboard'))
+
+    scheduled_for = scheduled_for_local + timedelta(minutes=timezone_offset_minutes)
+    title = (request.form.get('title') or 'CCM timed test notification').strip()[:150]
+    body = (request.form.get('body') or f'This timed test notification was queued by admin {current_user.username}.').strip()
+    if not title or not body:
+        flash('Provide both a title and body for the scheduled notification', 'warning')
+        return redirect(url_for('main.admin_dashboard'))
+
+    db.session.add(QueuedAdminNotification(
+        target_user_id=user.id,
+        created_by_id=current_user.id,
+        title=title,
+        body=body,
+        url=url_for('main.calendar_view'),
+        scheduled_for=scheduled_for,
+    ))
+    db.session.commit()
+    flash(f'Scheduled timed test notification for {user.username}', 'success')
+    return redirect(url_for('main.admin_dashboard'))
+
+
+@main.route('/admin/error_logs/clear', methods=['POST'])
+@login_required
+@admin_required
+def admin_clear_error_logs():
+    AppErrorLog.query.delete()
+    db.session.commit()
+    flash('Cleared caught exception log', 'success')
     return redirect(url_for('main.admin_dashboard'))
 
 

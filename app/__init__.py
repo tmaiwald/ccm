@@ -48,6 +48,36 @@ def _ensure_runtime_schema(engine):
                 'FOREIGN KEY(proposal_id) REFERENCES proposal (id)'
                 ')'
             ))
+    if not inspector.has_table('app_error_log'):
+        with engine.begin() as connection:
+            connection.execute(text(
+                'CREATE TABLE app_error_log ('
+                'id INTEGER NOT NULL PRIMARY KEY, '
+                'source VARCHAR(120) NOT NULL, '
+                'message VARCHAR(255) NOT NULL, '
+                'stack_trace TEXT, '
+                'context TEXT, '
+                'created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP'
+                ')'
+            ))
+    if not inspector.has_table('queued_admin_notification'):
+        with engine.begin() as connection:
+            connection.execute(text(
+                'CREATE TABLE queued_admin_notification ('
+                'id INTEGER NOT NULL PRIMARY KEY, '
+                'target_user_id INTEGER NOT NULL, '
+                'created_by_id INTEGER NOT NULL, '
+                'title VARCHAR(150) NOT NULL, '
+                'body TEXT NOT NULL, '
+                'url VARCHAR(255) NOT NULL DEFAULT \'/calendar\', '
+                'scheduled_for DATETIME NOT NULL, '
+                'sent_at DATETIME, '
+                'delivery_summary VARCHAR(255), '
+                'created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, '
+                'FOREIGN KEY(target_user_id) REFERENCES user (id), '
+                'FOREIGN KEY(created_by_id) REFERENCES user (id)'
+                ')'
+            ))
 
 
 def create_app():
@@ -97,7 +127,7 @@ def create_app():
     def process_regular_meals_command():
         from .routes import process_regular_meal_automation
         processed = process_regular_meal_automation()
-        click.echo(f'Processed {processed} regular meal invitation(s).')
+        click.echo(f'Processed {processed} scheduled notification task(s).')
 
     @app.cli.command('list-regular-meal-notifications')
     @click.option('--days', default=21, show_default=True, type=int)

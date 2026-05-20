@@ -197,6 +197,35 @@ class AdminNotificationPreference(db.Model):
     user = db.relationship('User', backref=db.backref('admin_notification_preference', uselist=False, cascade='all, delete-orphan'))
 
 
+class AppErrorLog(db.Model):
+    __tablename__ = 'app_error_log'
+
+    id = db.Column(db.Integer, primary_key=True)
+    source = db.Column(db.String(120), nullable=False)
+    message = db.Column(db.String(255), nullable=False)
+    stack_trace = db.Column(db.Text, nullable=True)
+    context = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+
+class QueuedAdminNotification(db.Model):
+    __tablename__ = 'queued_admin_notification'
+
+    id = db.Column(db.Integer, primary_key=True)
+    target_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    title = db.Column(db.String(150), nullable=False)
+    body = db.Column(db.Text, nullable=False)
+    url = db.Column(db.String(255), nullable=False, default='/calendar')
+    scheduled_for = db.Column(db.DateTime, nullable=False)
+    sent_at = db.Column(db.DateTime, nullable=True)
+    delivery_summary = db.Column(db.String(255), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    target_user = db.relationship('User', foreign_keys=[target_user_id], backref=db.backref('queued_admin_notifications', lazy=True))
+    created_by = db.relationship('User', foreign_keys=[created_by_id], backref=db.backref('created_queued_admin_notifications', lazy=True))
+
+
 class Group(db.Model):
     __tablename__ = 'ccm_group'
     id = db.Column(db.Integer, primary_key=True)
