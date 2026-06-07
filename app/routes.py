@@ -1835,7 +1835,7 @@ def admin_toggle_global_notifications():
     enabled = (request.form.get('global_notifications') == '1')
     cfg.mail_notifications_enabled = enabled
     db.session.commit()
-    flash('Global mail notification setting updated', 'success')
+    flash('Global email notification setting updated. Push notifications stay independent.', 'success')
     return redirect(url_for('main.admin_dashboard'))
 
 

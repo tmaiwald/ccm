@@ -100,6 +100,13 @@ class Proposal(db.Model):
     def discussion_label(self):
         return 'shared cart' if self.is_shared_cart else 'meal'
 
+    @property
+    def creator_label(self):
+        for occurrence in self.regular_meal_occurrences:
+            if occurrence.auto_created and occurrence.regular_meal and occurrence.regular_meal.group:
+                return f'group {occurrence.regular_meal.group.name}'
+        return self.proposer.username if self.proposer else 'unknown'
+
 class Participant(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)

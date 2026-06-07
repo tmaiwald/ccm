@@ -44,7 +44,7 @@
             </form>
           {% endif %}
         </div>
-        <div class="small text-muted">By {{ proposal.proposer.username }} · {{ proposal.date.strftime('%Y-%m-%d') }}</div>
+        <div class="small text-muted">By {{ proposal.creator_label }} · {{ proposal.date.strftime('%Y-%m-%d') }}</div>
         <p class="mt-2 small">{% if proposal.is_shared_cart %}Coordinate shared shopping items and billing in one discussion thread.{% else %}{{ proposal.recipe.ingredients|truncate(120) }}{% endif %}</p>
 
         {# MOBILE: stacked controls under description (visible on small screens) #}
