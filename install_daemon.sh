@@ -72,8 +72,7 @@ sudo tee "$AUTOMATION_TIMER_FILE" > /dev/null <<EOF
 Description=Run CCM regular meal automation every 15 minutes
 
 [Timer]
-OnBootSec=5min
-OnUnitActiveSec=15min
+OnCalendar=*:0/15
 Persistent=true
 Unit=$AUTOMATION_SERVICE_NAME.service
 
