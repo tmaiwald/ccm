@@ -1,6 +1,7 @@
-from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory, jsonify, has_request_context
+from flask import Blueprint, abort, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory, jsonify, has_request_context
 from . import db
 from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, WebPushDelivery, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal, RegularMealOccurrence, RegularMealMessage, MealExpense, MealExpenseSplit, RecipeComment, LoginDomainBlocklist, AdminNotificationPreference, AppErrorLog, QueuedAdminNotification, normalize_email_domain, is_email_domain_blacklisted
+from .models import MealCompletion
 from flask_login import current_user, login_required
 from datetime import date, timedelta, time
 from calendar import monthrange
@@ -10,7 +11,7 @@ from functools import wraps
 import smtplib
 from email.message import EmailMessage
 from email.utils import formataddr, parsedate_to_datetime
-from sqlalchemy import case, or_
+from sqlalchemy import case, literal, or_, select
 from sqlalchemy.dialects.sqlite import insert
 
 import base64
@@ -25,6 +26,7 @@ import io
 import uuid
 from datetime import datetime, timezone
 import traceback
+from zoneinfo import ZoneInfo
 from urllib.parse import urlsplit
 
 main = Blueprint("main", __name__)
@@ -1369,13 +1371,13 @@ def profile(user_id):
     u = User.query.get_or_404(user_id)
     # simple stats
     recipes = Recipe.query.filter_by(user_id=u.id).all()
-    times_cooked = sum((r.times_cooked or 0) for r in recipes)
+    meals_cooked = MealCompletion.query.filter_by(cook_user_id=u.id).count()
     push_subscription_count = WebPushSubscription.query.filter_by(user_id=u.id, expired_at=None).count()
     return render_template(
         'profile.html',
         user=u,
         recipes=recipes,
-        times_cooked=times_cooked,
+        meals_cooked=meals_cooked,
         push_subscription_count=push_subscription_count,
     )
 
@@ -1718,42 +1720,119 @@ def claim_grocery(proposal_id):
     return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
 
 
+def can_manage_meal_completion(proposal, user):
+    return user.is_admin or user.id == proposal.proposer_id or user.id == proposal.cook_user_id
+
+
+def meal_has_started(proposal, now):
+    starts_at = datetime.combine(proposal.date, proposal.start_time or time(12))
+    return now.replace(tzinfo=None) >= starts_at
+
+
+def meal_local_now():
+    return datetime.now(ZoneInfo(current_app.config['MEAL_TIMEZONE']))
+
+
+@main.route('/proposal/<int:proposal_id>/cooking/confirm', methods=['POST'])
+@login_required
+def confirm_meal_cooking(proposal_id):
+    proposal = Proposal.query.get_or_404(proposal_id)
+    discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
+    if not can_manage_meal_completion(proposal, current_user):
+        abort(403)
+    if proposal.is_shared_cart or not proposal.cook_user or not meal_has_started(proposal, meal_local_now()):
+        flash('Assign a cook and wait until the meal starts before confirming cooking.', 'warning')
+        return redirect(discuss_url)
+
+    # Match the assignment and schedule that were checked before inserting.
+    confirmed = select(
+        Proposal.id, Proposal.cook_user_id, literal(current_user.id),
+        literal(datetime.now(timezone.utc).replace(tzinfo=None)),
+    ).where(
+        Proposal.id == proposal_id,
+        Proposal.cook_user_id == proposal.cook_user_id,
+        Proposal.date == proposal.date,
+        Proposal.start_time == proposal.start_time,
+    )
+    saved = db.session.execute(
+        insert(MealCompletion)
+        .from_select(['proposal_id', 'cook_user_id', 'confirmed_by_id', 'confirmed_at'], confirmed)
+        .on_conflict_do_nothing(index_elements=['proposal_id'])
+    )
+    db.session.commit()
+    if saved.rowcount:
+        flash('Cooking confirmed.', 'success')
+    return redirect(discuss_url)
+
+
+@main.route('/proposal/<int:proposal_id>/cooking/undo', methods=['POST'])
+@login_required
+def undo_meal_cooking(proposal_id):
+    proposal = Proposal.query.get_or_404(proposal_id)
+    if not can_manage_meal_completion(proposal, current_user):
+        abort(403)
+    removed = MealCompletion.query.filter_by(proposal_id=proposal_id).delete()
+    db.session.commit()
+    if removed:
+        flash('Cooking credit removed.', 'success')
+    return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+
+
 @main.route('/proposal/<int:proposal_id>/claim_cook', methods=['POST'])
 @login_required
 def claim_cook(proposal_id):
     p = Proposal.query.get_or_404(proposal_id)
-    # if already claimed by someone else, prevent
-    if p.cook_user_id and p.cook_user_id != current_user.id:
-        flash('Already claimed by someone else', 'warning')
-        return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
-    # toggle: if current user already claimed, unclaim
-    if p.cook_user_id == current_user.id:
-        p.cook_user_id = None
-        flash('You unclaimed cooking duty', 'success')
-        # notify participants
-        notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
-        recipients = [u.email for u in notify_parts if u.email]
-        subj, text_body, html_body = make_proposal_mail(p, 'unclaimed cooking duty', current_user.username)
-        discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
-        for u in notify_parts:
-            queue_web_push_to_user(u, subj, f'{current_user.username} unclaimed cooking duty', url=discuss_url)
-        db.session.commit()
-        if recipients:
-            send_mail(subj, text_body, recipients, html_body)
+    discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
+    if p.is_shared_cart:
+        abort(404)
+    is_participant = any(pa.user_id == current_user.id for pa in p.participants)
+    if not (can_manage_meal_completion(p, current_user) or is_participant):
+        abort(403)
+    if p.completion:
+        flash('Undo the cooking confirmation before changing the cook.', 'warning')
+        return redirect(discuss_url)
+    submitted_action = request.form.get('action')
+    unclaiming = submitted_action == 'unclaim' or (submitted_action is None and p.cook_user_id == current_user.id)
+    if unclaiming and not can_manage_meal_completion(p, current_user):
+        abort(403)
+    if unclaiming and p.cook_user_id is None:
+        return redirect(discuss_url)
+    if not unclaiming and p.cook_user is not None:
+        if p.cook_user_id != current_user.id:
+            flash('Already claimed by someone else', 'warning')
+        return redirect(discuss_url)
+    clearing_another_cook = unclaiming and p.cook_user_id != current_user.id
+    changed = (
+        Proposal.query.filter_by(id=p.id, cook_user_id=p.cook_user_id)
+        .filter(~Proposal.completion.has())
+        .update({Proposal.cook_user_id: None if unclaiming else current_user.id}, synchronize_session=False)
+    )
+    if not changed:
+        db.session.rollback()
+        flash('The cooking assignment changed. Check the current assignment and try again.', 'warning')
+        return redirect(discuss_url)
+
+    if clearing_another_cook:
+        action = 'cleared the cooking assignment'
+        message = 'Cooking assignment cleared.'
+    elif unclaiming:
+        action = 'unclaimed cooking duty'
+        message = 'You unclaimed cooking duty'
     else:
-        p.cook_user_id = current_user.id
-        flash('You will cook the meal', 'success')
-        # notify participants
-        notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
-        recipients = [u.email for u in notify_parts if u.email]
-        subj, text_body, html_body = make_proposal_mail(p, 'claimed cooking duty', current_user.username)
-        discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
-        for u in notify_parts:
-            queue_web_push_to_user(u, subj, f'{current_user.username} claimed cooking duty', url=discuss_url)
-        db.session.commit()
-        if recipients:
-            send_mail(subj, text_body, recipients, html_body)
-    return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
+        action = 'claimed cooking duty'
+        message = 'You will cook the meal'
+    notify_parts = [
+        pa.user for pa in p.participants if pa.user_id != current_user.id and pa.user.notify_discussion
+    ]
+    recipients = [u.email for u in notify_parts if u.email]
+    subj, text_body, html_body = make_proposal_mail(p, action, current_user.username)
+    for u in notify_parts:
+        queue_web_push_to_user(u, subj, f'{current_user.username} {action}', url=discuss_url)
+    db.session.commit()
+    flash(message, 'success')
+    if recipients:
+        send_mail(subj, text_body, recipients, html_body)
+    return redirect(discuss_url)
 
 
 @main.route('/proposal/<int:proposal_id>/shopping/add', methods=['POST'])
@@ -1866,7 +1945,10 @@ def proposal_discuss(proposal_id):
                            joined=joined, can_post=can_post,
                            reactions=reactions, my_reactions=my_reactions,
                            shopping_items=shopping_items,
-                           expenses=expenses, settlement=settlement)
+                           expenses=expenses, settlement=settlement,
+                           can_manage_cooking=can_manage_meal_completion(p, current_user),
+                           cooking_can_be_confirmed=not p.is_shared_cart and p.cook_user is not None
+                           and meal_has_started(p, meal_local_now()))
 
 
 @main.route('/proposal/<int:proposal_id>/messages/poll')
@@ -2428,6 +2510,9 @@ def admin_delete_user(user_id):
             Message.query.filter_by(proposal_id=p.id).delete()
             db.session.delete(p)
         db.session.delete(r)
+    Proposal.query.filter_by(cook_user_id=u.id).update({Proposal.cook_user_id: None})
+    MealCompletion.query.filter_by(cook_user_id=u.id).update({MealCompletion.cook_user_id: None})
+    MealCompletion.query.filter_by(confirmed_by_id=u.id).update({MealCompletion.confirmed_by_id: None})
     db.session.delete(u)
     db.session.commit()
     flash('User and related data deleted', 'success')
@@ -2543,7 +2628,8 @@ def delete_recipe(recipe_id):
 def recipe_detail(recipe_id):
     r = Recipe.query.get_or_404(recipe_id)
     comments = RecipeComment.query.filter_by(recipe_id=recipe_id).order_by(RecipeComment.created_at.asc()).all()
-    return render_template('recipe_detail.html', recipe=r, comments=comments)
+    confirmed_uses = MealCompletion.query.join(Proposal).filter(Proposal.recipe_id == recipe_id).count()
+    return render_template('recipe_detail.html', recipe=r, comments=comments, confirmed_uses=confirmed_uses)
 
 
 @main.route('/recipe/<int:recipe_id>/comments/add', methods=['POST'])
@@ -2588,15 +2674,27 @@ def recipe_comment_delete(recipe_id, comment_id):
 @main.route('/users')
 @login_required
 def users_overview():
-    # return list of users with avatar, recipe count and total times_cooked
-    users = User.query.order_by(User.username).all()
-    data = []
-    for u in users:
-        recs = Recipe.query.filter_by(user_id=u.id).all()
-        recipes_count = len(recs)
-        times_cooked = sum((r.times_cooked or 0) for r in recs)
-        data.append({'user': u, 'recipes_count': recipes_count, 'times_cooked': times_cooked})
-    return render_template('users_overview.html', users=data)
+    recipe_counts = db.session.query(
+        Recipe.user_id, db.func.count().label('recipes_count'),
+    ).group_by(Recipe.user_id).subquery()
+    cooking_counts = db.session.query(
+        MealCompletion.cook_user_id, db.func.count().label('meals_cooked'),
+    ).group_by(MealCompletion.cook_user_id).subquery()
+    users = (
+        db.session.query(
+            User,
+            db.func.coalesce(recipe_counts.c.recipes_count, 0).label('recipes_count'),
+            db.func.coalesce(cooking_counts.c.meals_cooked, 0).label('meals_cooked'),
+        )
+        .outerjoin(recipe_counts, recipe_counts.c.user_id == User.id)
+        .outerjoin(cooking_counts, cooking_counts.c.cook_user_id == User.id)
+        .order_by(User.username)
+        .all()
+    )
+    return render_template('users_overview.html', users=[
+        {'user': user, 'recipes_count': recipes_count, 'meals_cooked': meals_cooked}
+        for user, recipes_count, meals_cooked in users
+    ])
 
 
 @main.route('/proposal/<int:proposal_id>/change_start_time', methods=['POST'])

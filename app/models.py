@@ -107,6 +107,20 @@ class Proposal(db.Model):
                 return f'group {occurrence.regular_meal.group.name}'
         return self.proposer.username if self.proposer else 'unknown'
 
+class MealCompletion(db.Model):
+    proposal_id = db.Column(db.Integer, db.ForeignKey('proposal.id'), primary_key=True)
+    cook_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), index=True)
+    confirmed_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    confirmed_at = db.Column(db.DateTime, nullable=False)
+    historical_assignment = db.Column(db.Boolean, nullable=False, server_default=db.false())
+
+    proposal = db.relationship(
+        'Proposal',
+        backref=db.backref('completion', uselist=False, cascade='all, delete-orphan'),
+    )
+    cook = db.relationship('User', foreign_keys=[cook_user_id])
+
+
 class Participant(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
