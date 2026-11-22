@@ -204,6 +204,11 @@ def create_app():
     with app.app_context():
         # import models before creating tables
         from . import models  # noqa: F401
+        from .meal_history import backfill_historical_cooking
+        # Serialize the schema and data change with other app or worker starts.
+        with db.engine.begin() as connection:
+            connection.exec_driver_sql('BEGIN IMMEDIATE')
+            backfill_historical_cooking(connection, app.config['MEAL_TIMEZONE'])
         db.create_all()
         _ensure_runtime_schema(db.engine)
 

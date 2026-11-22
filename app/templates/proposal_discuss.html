@@ -98,7 +98,9 @@
   <div class="mb-3">
     {% if proposal.completion %}
       <div class="alert alert-success py-2">
-        {% if proposal.completion.cook %}
+        {% if proposal.completion.historical_assignment %}
+          Historical cooking credit{% if proposal.completion.cook %} for <strong>{{ proposal.completion.cook.username }}</strong>{% endif %}, based on the recorded assignment.
+        {% elif proposal.completion.cook %}
           <strong>{{ proposal.completion.cook.username }}</strong> cooked this meal.
         {% else %}
           Cooking confirmed.
@@ -117,7 +119,7 @@
         <div class="d-flex gap-2 flex-wrap mb-2">
           {% if proposal.completion and can_manage_cooking %}
             <form method="post" action="{{ url_for('main.undo_meal_cooking', proposal_id=proposal.id) }}">
-              <button class="btn btn-sm btn-outline-secondary">Undo cooking confirmation</button>
+              <button class="btn btn-sm btn-outline-secondary">{{ 'Remove historical credit' if proposal.completion.historical_assignment else 'Undo cooking confirmation' }}</button>
             </form>
           {% elif not proposal.completion and not proposal.is_shared_cart %}
             {% if can_manage_cooking and cooking_can_be_confirmed %}

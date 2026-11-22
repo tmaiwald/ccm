@@ -1774,7 +1774,7 @@ def undo_meal_cooking(proposal_id):
     removed = MealCompletion.query.filter_by(proposal_id=proposal_id).delete()
     db.session.commit()
     if removed:
-        flash('Cooking confirmation removed.', 'success')
+        flash('Cooking credit removed.', 'success')
     return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
 
 

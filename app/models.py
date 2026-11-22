@@ -112,6 +112,7 @@ class MealCompletion(db.Model):
     cook_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), index=True)
     confirmed_by_id = db.Column(db.Integer, db.ForeignKey('user.id'))
     confirmed_at = db.Column(db.DateTime, nullable=False)
+    historical_assignment = db.Column(db.Boolean, nullable=False, server_default=db.false())
 
     proposal = db.relationship(
         'Proposal',

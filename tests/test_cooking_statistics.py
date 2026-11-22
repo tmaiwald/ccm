@@ -1,10 +1,11 @@
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from flask import Flask, g
+from sqlalchemy import text
 
 from app import create_app, db
 from app.models import Group, MealCompletion, Participant, Proposal, Recipe, RegularMeal, RegularMealOccurrence, User
@@ -76,7 +77,7 @@ class CookingStatisticsTests(TestCase):
         self.assertIn(b'cooked this meal', self.client.get(f'/proposal/{meal.id}/discuss').data)
         self.assertIn(b'Meals cooked: 1', self.client.get(f'/profile/{self.cook.id}').data)
         self.assertIn(b'Meals cooked: 0', self.client.get(f'/profile/{self.author.id}').data)
-        self.assertIn(b'Confirmed meal uses: 1', self.client.get(f'/recipe/{self.recipe.id}').data)
+        self.assertIn(b'Recorded meal uses: 1', self.client.get(f'/recipe/{self.recipe.id}').data)
         overview = self.client.get('/users').data
         self.assertIn(b'Recipes: 0 \xc2\xb7 Meals cooked: 1', overview)
         self.assertIn(b'Recipes: 1 \xc2\xb7 Meals cooked: 0', overview)
@@ -138,3 +139,51 @@ class CookingStatisticsTests(TestCase):
         self.assertEqual(MealCompletion.query.one().proposal_id, first.id)
         self.post(second, 'cooking/confirm')
         self.assertEqual(MealCompletion.query.count(), 2)
+
+    def test_historical_backfill_runs_once_and_preserves_explicit_confirmations(self):
+        today = datetime.now(self.now.tzinfo).date()
+        yesterday = today - timedelta(days=1)
+        historical = self.proposal(meal_date=yesterday)
+        explicit = self.proposal()
+        upcoming = self.proposal(meal_date=today + timedelta(days=1))
+        same_day = self.proposal(meal_date=today)
+        cart = self.proposal(meal_date=yesterday, kind='shared_cart')
+        unassigned = self.proposal(meal_date=yesterday, assigned=False)
+        missing_user = self.proposal(meal_date=yesterday)
+        missing_user.cook_user_id = 999999
+        db.session.commit()
+
+        self.sign_in(self.organizer)
+        self.post(explicit, 'cooking/confirm')
+        proposal_ids = (historical.id, explicit.id)
+        excluded_ids = [p.id for p in (upcoming, same_day, cart, unassigned, missing_user)]
+        cook_id = self.cook.id
+        organizer_id = self.organizer.id
+        db.session.execute(text('ALTER TABLE meal_completion DROP COLUMN historical_assignment'))
+        db.session.commit()
+
+        def restart():
+            with patch('app.Flask', side_effect=lambda *args, **kwargs: Flask(
+                *args, **kwargs, instance_path=self.app.instance_path,
+            )):
+                restarted = create_app()
+            restarted.testing = True
+            return restarted
+
+        imported = restart()
+        with imported.app_context():
+            recovered = db.session.get(MealCompletion, proposal_ids[0])
+            self.assertEqual(recovered.cook_user_id, cook_id)
+            self.assertTrue(recovered.historical_assignment)
+            self.assertFalse(db.session.get(MealCompletion, proposal_ids[1]).historical_assignment)
+            self.assertEqual(MealCompletion.query.filter(MealCompletion.proposal_id.in_(excluded_ids)).count(), 0)
+
+        client = imported.test_client()
+        with client.session_transaction() as session:
+            session['_user_id'] = str(organizer_id)
+        self.assertIn(b'Historical cooking credit', client.get(f'/proposal/{proposal_ids[0]}/discuss').data)
+        self.assertEqual(client.post(f'/proposal/{proposal_ids[0]}/cooking/undo').status_code, 302)
+
+        with restart().app_context():
+            self.assertIsNone(db.session.get(MealCompletion, proposal_ids[0]))
+            self.assertEqual(MealCompletion.query.count(), 1)
