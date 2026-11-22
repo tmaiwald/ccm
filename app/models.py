@@ -181,7 +181,21 @@ class WebPushSubscription(db.Model):
     auth = db.Column(db.String(255), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    last_seen_at = db.Column(db.DateTime, nullable=True)
+    last_test_at = db.Column(db.DateTime, nullable=True)
+    expired_at = db.Column(db.DateTime, nullable=True)
+
     user = db.relationship('User', backref=db.backref('push_subscriptions', lazy=True, cascade='all, delete-orphan'))
+
+
+class WebPushDelivery(db.Model):
+    id = db.Column(db.String(32), primary_key=True)
+    user_id = db.Column(db.Integer, nullable=False)
+    endpoint = db.Column(db.Text, nullable=False)
+    payload = db.Column(db.Text, nullable=False)
+    attempts = db.Column(db.Integer, nullable=False, default=0)
+    due_at = db.Column(db.DateTime, nullable=False, index=True)
+    expires_at = db.Column(db.DateTime, nullable=False)
 
 
 class LoginDomainBlocklist(db.Model):

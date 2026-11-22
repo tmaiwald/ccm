@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, g, send_from_directory, jsonify, has_request_context
 from . import db
-from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal, RegularMealOccurrence, RegularMealMessage, MealExpense, MealExpenseSplit, RecipeComment, LoginDomainBlocklist, AdminNotificationPreference, AppErrorLog, QueuedAdminNotification, normalize_email_domain, is_email_domain_blacklisted
+from .models import Recipe, Proposal, Participant, User, Message, MessageReaction, MailConfig, WebPushSubscription, WebPushDelivery, Group, GroupMembership, GroupMessage, GroupMessageReaction, ShoppingItem, RegularMeal, RegularMealOccurrence, RegularMealMessage, MealExpense, MealExpenseSplit, RecipeComment, LoginDomainBlocklist, AdminNotificationPreference, AppErrorLog, QueuedAdminNotification, normalize_email_domain, is_email_domain_blacklisted
 from flask_login import current_user, login_required
 from datetime import date, timedelta, time
 from calendar import monthrange
@@ -9,20 +9,23 @@ from werkzeug.utils import secure_filename
 from functools import wraps
 import smtplib
 from email.message import EmailMessage
-from email.utils import formataddr
-from sqlalchemy import or_
+from email.utils import formataddr, parsedate_to_datetime
+from sqlalchemy import case, or_
+from sqlalchemy.dialects.sqlite import insert
 
 import base64
 import json
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
 from pywebpush import webpush, WebPushException
+from requests import Session, ConnectionError, Timeout
 
 from PIL import Image
 import io
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 import traceback
+from urllib.parse import urlsplit
 
 main = Blueprint("main", __name__)
 
@@ -184,10 +187,11 @@ def _notify_regular_meal(group, rm, actor, action='added'):
             continue
         u = membership.user
         if membership.notify_push:
-            send_web_push_to_user(u, title, push_body, url=group_url)
+            queue_web_push_to_user(u, title, push_body, url=group_url)
         if membership.notify_mail and u.email:
             mail_recipients.append(u.email)
 
+    db.session.commit()
     if mail_recipients:
         text_body = (
             f"Hello,\n\n{text_intro}\n\n{detail_line}\n\n"
@@ -254,8 +258,9 @@ def _notify_regular_meal_invitation(group, rm, proposal, occurrence_date, auto_c
     for user in targets:
         membership = next((m for m in group.memberships if m.user_id == user.id), None)
         if membership and membership.notify_push:
-            send_web_push_to_user(user, title, push_body, url=discussion_path)
+            queue_web_push_to_user(user, title, push_body, url=discussion_path)
 
+    db.session.commit()
     if mail_recipients:
         text_body = (
             f"Hello,\n\n"
@@ -317,7 +322,6 @@ def process_regular_meal_automation(now=None):
             occurrence.invited_at = now
 
             _notify_regular_meal_invitation(group, rm, proposal, occurrence_date, auto_created=auto_created)
-            db.session.commit()
             processed += 1
         except Exception as exc:
             db.session.rollback()
@@ -332,12 +336,12 @@ def process_regular_meal_automation(now=None):
     for queued in queued_notifications:
         try:
             target_user = queued.target_user
-            push_ok = send_web_push_to_user(target_user, queued.title, queued.body, url=queued.url)
-            mail_ok = False
-            if target_user and target_user.email:
-                mail_ok = send_mail(queued.title, queued.body, [target_user.email])
+            push_queued = queue_web_push_to_user(target_user, queued.title, queued.body, url=queued.url)
             queued.sent_at = now
-            queued.delivery_summary = 'push and email' if push_ok and mail_ok else 'push' if push_ok else 'email' if mail_ok else 'no delivery channel succeeded'
+            queued.delivery_summary = 'push queued' if push_queued else 'no delivery channel succeeded'
+            db.session.commit()
+            mail_ok = bool(target_user and target_user.email and send_mail(queued.title, queued.body, [target_user.email]))
+            queued.delivery_summary = 'push queued, email sent' if push_queued and mail_ok else 'push queued' if push_queued else 'email sent' if mail_ok else 'no delivery channel succeeded'
             db.session.commit()
             processed += 1
         except Exception as exc:
@@ -528,30 +532,107 @@ def load_mail_config():
 @login_required
 def push_public_key():
     public_key, _, _ = ensure_vapid_keys()
-    return {'publicKey': public_key}
+    return {'publicKey': public_key}, 200, {'Cache-Control': 'no-store'}
 
 
 @main.route('/push/subscribe', methods=['POST'])
 @login_required
 def push_subscribe():
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return {'ok': False, 'error': 'Invalid subscription'}, 400
     sub = data.get('subscription') or data
     endpoint = sub.get('endpoint') if isinstance(sub, dict) else None
     keys = sub.get('keys') if isinstance(sub, dict) else None
-    p256dh = keys.get('p256dh') if keys else None
-    auth = keys.get('auth') if keys else None
-    if not endpoint or not p256dh or not auth:
-        return {'ok': False, 'error': 'invalid subscription'}, 400
+    p256dh = keys.get('p256dh') if isinstance(keys, dict) else None
+    auth = keys.get('auth') if isinstance(keys, dict) else None
+    previous_endpoint = data.get('previousEndpoint')
+    if (
+        not isinstance(endpoint, str) or not endpoint.startswith('https://') or len(endpoint) > 4096
+        or any(not isinstance(key, str) or not key or len(key) > 255 for key in (p256dh, auth))
+        or (previous_endpoint is not None and not isinstance(previous_endpoint, str))
+    ):
+        return {'ok': False, 'error': 'Invalid subscription'}, 400
 
-    existing = WebPushSubscription.query.filter_by(endpoint=endpoint).first()
-    if not existing:
-        existing = WebPushSubscription(endpoint=endpoint, user_id=current_user.id, p256dh=p256dh, auth=auth)
-        db.session.add(existing)
-    else:
-        existing.user_id = current_user.id
-        existing.p256dh = p256dh
-        existing.auth = auth
+    values = dict(user_id=current_user.id, p256dh=p256dh, auth=auth, last_seen_at=datetime.utcnow())
+    sub_row = WebPushSubscription.__table__
+    changed_keys = or_(sub_row.c.p256dh != p256dh, sub_row.c.auth != auth)
+    expired_at = case((changed_keys, None), else_=sub_row.c.expired_at)
+    still_expired = db.session.execute(
+        insert(sub_row).values(endpoint=endpoint, **values)
+        .on_conflict_do_update(index_elements=['endpoint'], set_={**values, 'expired_at': expired_at})
+        .returning(sub_row.c.expired_at)
+    ).scalar_one() is not None
+    if still_expired:
+        db.session.rollback()
+        return {'ok': False, 'error': 'The browser subscription has expired. Repair notifications to replace it.'}, 410
+    if previous_endpoint and previous_endpoint != endpoint:
+        WebPushDelivery.query.filter_by(endpoint=previous_endpoint, user_id=current_user.id).update(
+            {WebPushDelivery.endpoint: endpoint}
+        )
+        WebPushSubscription.query.filter_by(endpoint=previous_endpoint, user_id=current_user.id).delete()
     db.session.commit()
+    return {'ok': True}
+
+
+@main.route('/push/status', methods=['POST'])
+@login_required
+def push_status():
+    data = request.get_json(silent=True)
+    endpoint = data.get('endpoint') if isinstance(data, dict) else None
+    if not isinstance(endpoint, str):
+        return {'ok': False, 'error': 'Invalid endpoint'}, 400
+    registered = WebPushSubscription.query.filter_by(
+        endpoint=endpoint, user_id=current_user.id, expired_at=None,
+    ).first() is not None
+    return {'ok': True, 'registered': registered}
+
+
+@main.route('/push/test', methods=['POST'])
+@login_required
+def push_test():
+    data = request.get_json(silent=True)
+    endpoint = data.get('endpoint') if isinstance(data, dict) else None
+    if not isinstance(endpoint, str):
+        return {'ok': False, 'error': 'Invalid endpoint'}, 400
+    sub = WebPushSubscription.query.filter_by(endpoint=endpoint, user_id=current_user.id).first()
+    if sub is None:
+        return {'ok': False, 'error': 'This device is not registered with CCM'}, 404
+    if sub.expired_at:
+        return {'ok': False, 'error': 'Registration expired. Repair notifications and try again.'}, 410
+
+    # Keep the self-service test limited to known browser push providers.
+    try:
+        provider = urlsplit(sub.endpoint)
+        hostname = provider.hostname or ''
+        trusted = hostname in ('fcm.googleapis.com', 'updates.push.services.mozilla.com', 'web.push.apple.com')
+        trusted = trusted or hostname.endswith(('.push.services.mozilla.com', '.push.apple.com', '.notify.windows.com'))
+        if (
+            not trusted or provider.scheme != 'https' or provider.port not in (None, 443)
+            or provider.username is not None or provider.password is not None
+        ):
+            return {'ok': False, 'error': 'Use the admin test for this push provider'}, 400
+    except ValueError:
+        return {'ok': False, 'error': 'Invalid push provider'}, 400
+
+    now = datetime.utcnow()
+    reserved = (
+        WebPushSubscription.query.filter_by(id=sub.id, user_id=current_user.id)
+        .filter(or_(WebPushSubscription.last_test_at.is_(None),
+                    WebPushSubscription.last_test_at <= now - timedelta(minutes=1)))
+        .update({WebPushSubscription.last_test_at: now})
+    )
+    db.session.commit()
+    if not reserved:
+        return {'ok': False, 'error': 'Wait a minute before sending another test'}, 429
+    payload = push_payload('CCM test notification', 'This device can receive CCM notifications.',
+                           url_for('main.profile', user_id=current_user.id))
+    outcome, _ = deliver_web_push(sub, payload, ttl=300)
+    if outcome == 'expired':
+        db.session.commit()
+        return {'ok': False, 'error': 'Registration expired. Repair notifications and try again.'}, 410
+    if outcome != 'accepted':
+        return {'ok': False, 'error': 'The push provider did not accept the test. Try again shortly.'}, 502
     return {'ok': True}
 
 
@@ -629,49 +710,36 @@ def ensure_vapid_keys():
         cfg = MailConfig()
         db.session.add(cfg)
 
-    # pywebpush/py-vapid expects the VAPID private key as a base64url-encoded DER (PKCS8).
-    # Earlier versions of CCM stored PEM text; detect and migrate in-place.
+    # Preserve the signing key for existing browser subscriptions.
     needs_commit = False
-    if cfg.vapid_private_key and 'BEGIN' in (cfg.vapid_private_key or ''):
-        try:
-            loaded = serialization.load_pem_private_key(
-                cfg.vapid_private_key.encode('utf-8'),
-                password=None
-            )
-            der = loaded.private_bytes(
-                encoding=serialization.Encoding.DER,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption()
-            )
-            cfg.vapid_private_key = _b64url(der)
-            needs_commit = True
-        except Exception:
-            # If conversion fails, fall back to generating a new keypair below.
-            cfg.vapid_private_key = None
-
     if cfg.vapid_private_key:
-        # Validate format quickly; if invalid, regenerate.
         try:
-            padded = cfg.vapid_private_key + '=' * ((4 - (len(cfg.vapid_private_key) % 4)) % 4)
-            key_bytes = base64.urlsafe_b64decode(padded.encode('utf-8'))
-            serialization.load_der_private_key(key_bytes, password=None)
-        except Exception:
-            cfg.vapid_private_key = None
-
-    if not cfg.vapid_private_key or not cfg.vapid_public_key:
+            if 'BEGIN' in cfg.vapid_private_key:
+                private_key = serialization.load_pem_private_key(cfg.vapid_private_key.encode(), password=None)
+            else:
+                padded = cfg.vapid_private_key + '=' * (-len(cfg.vapid_private_key) % 4)
+                private_key = serialization.load_der_private_key(base64.urlsafe_b64decode(padded), password=None)
+            if not isinstance(private_key, ec.EllipticCurvePrivateKey) or not isinstance(private_key.curve, ec.SECP256R1):
+                raise ValueError('VAPID requires a P-256 private key')
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError('The stored VAPID signing key could not be loaded') from exc
+    elif cfg.vapid_public_key:
+        raise RuntimeError('The VAPID public key exists but its signing key is missing')
+    else:
         private_key = ec.generate_private_key(ec.SECP256R1())
-        private_der = private_key.private_bytes(
-            encoding=serialization.Encoding.DER,
-            format=serialization.PrivateFormat.PKCS8,
-            encryption_algorithm=serialization.NoEncryption()
-        )
-        public_key = private_key.public_key()
-        raw_public = public_key.public_bytes(
-            encoding=serialization.Encoding.X962,
-            format=serialization.PublicFormat.UncompressedPoint
-        )
-        cfg.vapid_private_key = _b64url(private_der)
-        cfg.vapid_public_key = _b64url(raw_public)
+
+    private_der = private_key.private_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    raw_public = private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.X962,
+        format=serialization.PublicFormat.UncompressedPoint,
+    )
+    public, private = _b64url(raw_public), _b64url(private_der)
+    if (cfg.vapid_public_key, cfg.vapid_private_key) != (public, private):
+        cfg.vapid_public_key, cfg.vapid_private_key = public, private
         needs_commit = True
 
     if not cfg.vapid_email:
@@ -685,46 +753,151 @@ def ensure_vapid_keys():
     return cfg.vapid_public_key, cfg.vapid_private_key, (cfg.vapid_email or 'mailto:admin@example.com')
 
 
-def send_web_push_to_user(user, title: str, body: str, url: str = '/'):
-    """Send a web push notification to all subscriptions of a user. Returns True if any succeeded."""
-    if not user or not getattr(user, 'push_subscriptions', None):
-        return False
-    public_key, private_key, vapid_email = ensure_vapid_keys()
-    payload = json.dumps({"title": title, "body": body, "url": url})
-    ok = False
-    stale = []
-    for sub in list(user.push_subscriptions):
-        sub_info = {
-            'endpoint': sub.endpoint,
-            'keys': {
-                'p256dh': sub.p256dh,
-                'auth': sub.auth
-            }
-        }
-        try:
-            webpush(
-                subscription_info=sub_info,
+def push_payload(title, body, url, notification_id=None):
+    return json.dumps({
+        'title': title[:150], 'body': body[:400], 'url': url,
+        'id': notification_id or uuid.uuid4().hex,
+    }, ensure_ascii=False)
+
+
+class PushSession(Session):
+    def post(self, url, **kwargs):
+        return super().post(url, allow_redirects=False, **kwargs)
+
+
+def deliver_web_push(sub, payload, ttl):
+    _, private_key, vapid_email = ensure_vapid_keys()
+    status = None
+    retry_after = None
+    try:
+        with PushSession() as session:
+            response = webpush(
+                subscription_info={
+                    'endpoint': sub.endpoint,
+                    'keys': {'p256dh': sub.p256dh, 'auth': sub.auth},
+                },
                 data=payload,
                 vapid_private_key=private_key,
                 vapid_claims={'sub': vapid_email},
-                ttl=86400,
-                timeout=10
+                headers={'Topic': json.loads(payload)['id']},
+                ttl=ttl,
+                timeout=10,
+                requests_session=session,
             )
-            ok = True
-        except WebPushException as e:
-            status = getattr(getattr(e, 'response', None), 'status_code', None)
-            if status in (404, 410):
-                stale.append(sub)
-            current_app.logger.exception('Web push failed: %s', e)
-            record_app_error('push.send', f'Web push failed: {e}', exc=e, context=f'user_id={user.id}; endpoint={sub.endpoint}')
-        except Exception as e:
-            current_app.logger.exception('Web push failed: %s', e)
-            record_app_error('push.send', f'Web push failed: {e}', exc=e, context=f'user_id={user.id}; endpoint={sub.endpoint}')
-    if stale:
-        for s in stale:
-            db.session.delete(s)
+        status = response.status_code
+    except WebPushException as exc:
+        if exc.response is not None:
+            status = exc.response.status_code
+            retry_after = exc.response.headers.get('Retry-After')
+    except (ConnectionError, Timeout):
+        current_app.logger.warning('Web push connection failed for subscription %s', sub.id)
+        return 'retry', None
+    except (ValueError, TypeError, KeyError) as exc:
+        current_app.logger.warning('Invalid web push data for subscription %s (%s)', sub.id, type(exc).__name__)
+        return 'rejected', None
+
+    if status is not None and 200 <= status < 300:
+        return 'accepted', None
+    if status in (404, 410):
+        WebPushSubscription.query.filter_by(
+            id=sub.id, user_id=sub.user_id, endpoint=sub.endpoint, p256dh=sub.p256dh, auth=sub.auth,
+        ).update({WebPushSubscription.expired_at: datetime.utcnow()})
+        return 'expired', None
+    current_app.logger.warning('Web push rejected for subscription %s with status %s', sub.id, status)
+    if status == 429 or (status is not None and 500 <= status < 600):
+        return 'retry', retry_after
+    return 'rejected', None
+
+
+def send_web_push_to_user(user, title: str, body: str, url: str = '/'):
+    """Send an immediate admin test or broadcast. Return True on provider acceptance."""
+    if not user:
+        return False
+    payload = push_payload(title, body, url)
+    accepted = False
+    for sub in WebPushSubscription.query.filter_by(user_id=user.id, expired_at=None):
+        outcome, _ = deliver_web_push(sub, payload, ttl=86400)
+        accepted = accepted or outcome == 'accepted'
+    db.session.commit()
+    return accepted
+
+
+def queue_web_push_to_user(user, title, body, url='/'):
+    """Add deliveries to the caller's database transaction."""
+    if not user:
+        return False
+    now = datetime.utcnow()
+    subscriptions = WebPushSubscription.query.filter_by(user_id=user.id, expired_at=None).all()
+    for sub in subscriptions:
+        delivery_id = uuid.uuid4().hex
+        db.session.add(WebPushDelivery(
+            id=delivery_id, user_id=user.id, endpoint=sub.endpoint,
+            payload=push_payload(title, body, url, delivery_id),
+            due_at=now, expires_at=now + timedelta(days=1),
+        ))
+    return bool(subscriptions)
+
+
+def web_push_retry_at(now, attempts, retry_after):
+    delay = min(60 * 2 ** min(attempts - 1, 6), 1800)
+    retry_at = now + timedelta(seconds=delay)
+    if retry_after:
+        try:
+            provider_retry_at = now + timedelta(seconds=int(retry_after))
+        except (ValueError, OverflowError):
+            try:
+                provider_retry_at = parsedate_to_datetime(retry_after).astimezone(timezone.utc).replace(tzinfo=None)
+            except (ValueError, TypeError, OverflowError):
+                return retry_at
+        retry_at = max(retry_at, provider_retry_at)
+    return retry_at
+
+
+def process_web_push_deliveries(limit=100):
+    processed = 0
+    while processed < limit:
+        now = datetime.utcnow()
+        delivery_id = (
+            db.session.query(WebPushDelivery.id)
+            .filter(WebPushDelivery.due_at <= now)
+            .order_by(WebPushDelivery.due_at, WebPushDelivery.id)
+            .limit(1).scalar()
+        )
+        if delivery_id is None:
+            return processed
+
+        lease_until = now + timedelta(minutes=2)
+        claimed = (
+            WebPushDelivery.query.filter_by(id=delivery_id)
+            .filter(WebPushDelivery.due_at <= now)
+            .update({WebPushDelivery.due_at: lease_until,
+                     WebPushDelivery.attempts: WebPushDelivery.attempts + 1})
+        )
         db.session.commit()
-    return ok
+        if not claimed:
+            continue
+
+        delivery = db.session.get(WebPushDelivery, delivery_id)
+        sub = WebPushSubscription.query.filter_by(user_id=delivery.user_id, endpoint=delivery.endpoint, expired_at=None).first()
+        remaining_seconds = int((delivery.expires_at - now).total_seconds())
+        outcome, retry_after = 'expired', None
+        if sub is not None and remaining_seconds > 0:
+            try:
+                outcome, retry_after = deliver_web_push(sub, delivery.payload, ttl=remaining_seconds)
+            except Exception as exc:
+                db.session.rollback()
+                current_app.logger.error('Web push delivery %s could not run (%s)', delivery_id, type(exc).__name__)
+                outcome = 'retry'
+
+        retry_at = web_push_retry_at(datetime.utcnow(), delivery.attempts, retry_after)
+        leased = WebPushDelivery.query.filter_by(id=delivery_id, due_at=lease_until)
+        if outcome == 'retry' and retry_at < delivery.expires_at:
+            leased.update({WebPushDelivery.due_at: retry_at})
+        else:
+            leased.delete()
+        db.session.commit()
+        processed += 1
+    return processed
 
 
 def admin_wants_new_user_notifications(user) -> bool:
@@ -1068,17 +1241,18 @@ def propose_recipe(recipe_id, date_str):
     deadline_str = request.form.get('join_deadline') if deadline_enabled else None
     p.join_deadline = datetime.fromisoformat(deadline_str) if deadline_str else None
     db.session.add(p)
-    db.session.commit()
+    db.session.flush()
     flash('Proposal created', 'success')
     # notify users who opted into new-proposal emails/push (exclude proposer)
     notify_users = User.query.filter(User.id != current_user.id, User.notify_new_proposal == True).all()
     recipients = [u.email for u in notify_users if u.email]
     subj, text_body, html_body = make_proposal_mail(p, 'created a proposal', current_user.username)
-    if recipients:
-        send_mail(subj, text_body, recipients, html_body)
     discuss_url = url_for('main.proposal_discuss', proposal_id=p.id)
     for u in notify_users:
-        send_web_push_to_user(u, subj, f'{current_user.username} created a new meal proposal', url=discuss_url)
+        queue_web_push_to_user(u, subj, f'{current_user.username} created a new meal proposal', url=discuss_url)
+    db.session.commit()
+    if recipients:
+        send_mail(subj, text_body, recipients, html_body)
     return redirect(url_for('main.calendar_view', year=d.year, month=d.month))
 
 
@@ -1104,17 +1278,18 @@ def create_proposal(recipe_id, date_str):
     deadline_str = request.form.get('join_deadline') if deadline_enabled else None
     p.join_deadline = datetime.fromisoformat(deadline_str) if deadline_str else None
     db.session.add(p)
-    db.session.commit()
+    db.session.flush()
     flash('Proposal created', 'success')
     # notify users who opted into new-proposal emails/push (exclude proposer)
     notify_users = User.query.filter(User.id != current_user.id, User.notify_new_proposal == True).all()
     recipients = [u.email for u in notify_users if u.email]
     subj, text_body, html_body = make_proposal_mail(p, 'created a proposal', current_user.username)
-    if recipients:
-        send_mail(subj, text_body, recipients, html_body)
     discuss_url = url_for('main.proposal_discuss', proposal_id=p.id)
     for u in notify_users:
-        send_web_push_to_user(u, subj, f'{current_user.username} created a new meal proposal', url=discuss_url)
+        queue_web_push_to_user(u, subj, f'{current_user.username} created a new meal proposal', url=discuss_url)
+    db.session.commit()
+    if recipients:
+        send_mail(subj, text_body, recipients, html_body)
     return redirect(url_for('main.calendar_view'))
 
 
@@ -1143,17 +1318,17 @@ def join_proposal(proposal_id):
             return redirect(url_for('main.calendar_view', year=py, week=pw))
         part = Participant(user_id=current_user.id, proposal_id=p.id)
         db.session.add(part)
-        db.session.commit()
         flash('Joined', 'success')
         # notify other participants who opted into discussion notifications
         notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
         recipients = [u.email for u in notify_parts if u.email]
         subj, text_body, html_body = make_proposal_mail(p, 'joined the meal', current_user.username)
-        if recipients:
-            send_mail(subj, text_body, recipients, html_body)
         discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
         for u in notify_parts:
-            send_web_push_to_user(u, subj, f'{current_user.username} joined the meal', url=discuss_url)
+            queue_web_push_to_user(u, subj, f'{current_user.username} joined the meal', url=discuss_url)
+        db.session.commit()
+        if recipients:
+            send_mail(subj, text_body, recipients, html_body)
     # decide where to redirect based on optional 'next' parameter
     next_param = (request.form.get('next') or request.args.get('next') or '').lower()
     if next_param == 'discuss':
@@ -1172,14 +1347,14 @@ def unjoin_proposal(proposal_id):
         notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
         recipients = [u.email for u in notify_parts if u.email]
         db.session.delete(part)
-        db.session.commit()
         flash('Left', 'success')
         subj, text_body, html_body = make_proposal_mail(p, 'left the meal', current_user.username)
-        if recipients:
-            send_mail(subj, text_body, recipients, html_body)
         discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
         for u in notify_parts:
-            send_web_push_to_user(u, subj, f'{current_user.username} left the meal', url=discuss_url)
+            queue_web_push_to_user(u, subj, f'{current_user.username} left the meal', url=discuss_url)
+        db.session.commit()
+        if recipients:
+            send_mail(subj, text_body, recipients, html_body)
     # redirect to either the discussion page or the calendar week depending on 'next'
     next_param = (request.form.get('next') or request.args.get('next') or '').lower()
     if next_param == 'discuss':
@@ -1195,7 +1370,7 @@ def profile(user_id):
     # simple stats
     recipes = Recipe.query.filter_by(user_id=u.id).all()
     times_cooked = sum((r.times_cooked or 0) for r in recipes)
-    push_subscription_count = len(getattr(u, 'push_subscriptions', []) or [])
+    push_subscription_count = WebPushSubscription.query.filter_by(user_id=u.id, expired_at=None).count()
     return render_template(
         'profile.html',
         user=u,
@@ -1274,17 +1449,18 @@ def propose_recipe_form():
     deadline_str = request.form.get('join_deadline') if deadline_enabled else None
     p.join_deadline = datetime.fromisoformat(deadline_str) if deadline_str else None
     db.session.add(p)
-    db.session.commit()
+    db.session.flush()
     flash('Meal proposal created', 'success')
     # notify users who opted into new-proposal emails/push (exclude proposer)
     notify_users = User.query.filter(User.id != current_user.id, User.notify_new_proposal == True).all()
     recipients = [u.email for u in notify_users if u.email]
     subj, text_body, html_body = make_proposal_mail(p, 'created a proposal', current_user.username)
-    if recipients:
-        send_mail(subj, text_body, recipients, html_body)
     discuss_url = url_for('main.proposal_discuss', proposal_id=p.id)
     for u in notify_users:
-        send_web_push_to_user(u, subj, f'{current_user.username} created a new {proposal_action_label(p)}', url=discuss_url)
+        queue_web_push_to_user(u, subj, f'{current_user.username} created a new {proposal_action_label(p)}', url=discuss_url)
+    db.session.commit()
+    if recipients:
+        send_mail(subj, text_body, recipients, html_body)
 
     # auto-join logic
     if request.form.get('auto_join'):
@@ -1339,17 +1515,18 @@ def create_shared_cart():
     )
     p.start_time = st
     db.session.add(p)
-    db.session.commit()
+    db.session.flush()
     flash('Shared cart created', 'success')
 
     notify_users = User.query.filter(User.id != current_user.id, User.notify_new_proposal == True).all()
     recipients = [u.email for u in notify_users if u.email]
     subj, text_body, html_body = make_proposal_mail(p, 'created a proposal', current_user.username)
-    if recipients:
-        send_mail(subj, text_body, recipients, html_body)
     discuss_url = url_for('main.proposal_discuss', proposal_id=p.id)
     for u in notify_users:
-        send_web_push_to_user(u, subj, f'{current_user.username} created a new shared cart', url=discuss_url)
+        queue_web_push_to_user(u, subj, f'{current_user.username} created a new shared cart', url=discuss_url)
+    db.session.commit()
+    if recipients:
+        send_mail(subj, text_body, recipients, html_body)
 
     if request.form.get('auto_join'):
         db.session.add(Participant(user_id=current_user.id, proposal_id=p.id))
@@ -1496,12 +1673,12 @@ def delete_proposal(proposal_id):
     )
 
     db.session.delete(p)
-    db.session.commit()
     flash(f'{proposal_title} removed', 'success')
+    for u in notify_parts:
+        queue_web_push_to_user(u, subject, f'{current_user.username} removed the {proposal_kind}', url=calendar_url)
+    db.session.commit()
     if recipients:
         send_mail(subject, text_body, recipients, html_body)
-    for u in notify_parts:
-        send_web_push_to_user(u, subject, f'{current_user.username} removed the {proposal_kind}', url=calendar_url)
     return redirect(url_for('main.calendar_view', year=pdate.year, month=pdate.month))
 
 
@@ -1516,28 +1693,28 @@ def claim_grocery(proposal_id):
     # toggle: if current user already claimed, unclaim
     if p.grocery_user_id == current_user.id:
         p.grocery_user_id = None
-        db.session.commit()
         flash('You unclaimed grocery duty', 'success')
         notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
         recipients = [u.email for u in notify_parts if u.email]
         subj, text_body, html_body = make_proposal_mail(p, 'unclaimed grocery duty', current_user.username)
-        if recipients:
-            send_mail(subj, text_body, recipients, html_body)
         discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
         for u in notify_parts:
-            send_web_push_to_user(u, subj, f'{current_user.username} unclaimed grocery duty', url=discuss_url)
+            queue_web_push_to_user(u, subj, f'{current_user.username} unclaimed grocery duty', url=discuss_url)
+        db.session.commit()
+        if recipients:
+            send_mail(subj, text_body, recipients, html_body)
     else:
         p.grocery_user_id = current_user.id
-        db.session.commit()
         flash('You will do the groceries', 'success')
         notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
         recipients = [u.email for u in notify_parts if u.email]
         subj, text_body, html_body = make_proposal_mail(p, 'claimed grocery duty', current_user.username)
-        if recipients:
-            send_mail(subj, text_body, recipients, html_body)
         discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
         for u in notify_parts:
-            send_web_push_to_user(u, subj, f'{current_user.username} claimed grocery duty', url=discuss_url)
+            queue_web_push_to_user(u, subj, f'{current_user.username} claimed grocery duty', url=discuss_url)
+        db.session.commit()
+        if recipients:
+            send_mail(subj, text_body, recipients, html_body)
     return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
 
 
@@ -1552,30 +1729,30 @@ def claim_cook(proposal_id):
     # toggle: if current user already claimed, unclaim
     if p.cook_user_id == current_user.id:
         p.cook_user_id = None
-        db.session.commit()
         flash('You unclaimed cooking duty', 'success')
         # notify participants
         notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
         recipients = [u.email for u in notify_parts if u.email]
         subj, text_body, html_body = make_proposal_mail(p, 'unclaimed cooking duty', current_user.username)
-        if recipients:
-            send_mail(subj, text_body, recipients, html_body)
         discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
         for u in notify_parts:
-            send_web_push_to_user(u, subj, f'{current_user.username} unclaimed cooking duty', url=discuss_url)
+            queue_web_push_to_user(u, subj, f'{current_user.username} unclaimed cooking duty', url=discuss_url)
+        db.session.commit()
+        if recipients:
+            send_mail(subj, text_body, recipients, html_body)
     else:
         p.cook_user_id = current_user.id
-        db.session.commit()
         flash('You will cook the meal', 'success')
         # notify participants
         notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
         recipients = [u.email for u in notify_parts if u.email]
         subj, text_body, html_body = make_proposal_mail(p, 'claimed cooking duty', current_user.username)
-        if recipients:
-            send_mail(subj, text_body, recipients, html_body)
         discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
         for u in notify_parts:
-            send_web_push_to_user(u, subj, f'{current_user.username} claimed cooking duty', url=discuss_url)
+            queue_web_push_to_user(u, subj, f'{current_user.username} claimed cooking duty', url=discuss_url)
+        db.session.commit()
+        if recipients:
+            send_mail(subj, text_body, recipients, html_body)
     return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
 
 
@@ -1657,16 +1834,16 @@ def proposal_discuss(proposal_id):
             m = Message(proposal_id=p.id, user_id=current_user.id, content=content or None,
                         attachment=att, attachment_url=att_url or None)
             db.session.add(m)
-            db.session.commit()
             # notify participants (exclude the sender)
             notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id and getattr(pa.user, 'notify_discussion', False)]
             recipients = [u.email for u in notify_parts if u.email]
             subj, text_body, html_body = make_proposal_mail(p, 'left a message', current_user.username, extra_text=f'"{content}"' if content else '')
-            if recipients:
-                send_mail(subj, text_body, recipients, html_body)
             discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
             for u in notify_parts:
-                send_web_push_to_user(u, subj, f'{current_user.username} left a message', url=discuss_url)
+                queue_web_push_to_user(u, subj, f'{current_user.username} left a message', url=discuss_url)
+            db.session.commit()
+            if recipients:
+                send_mail(subj, text_body, recipients, html_body)
         return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
 
     messages = Message.query.filter_by(proposal_id=p.id).order_by(Message.created_at.asc()).all()
@@ -1861,8 +2038,9 @@ def admin_dashboard():
         db.session.query(
             WebPushSubscription.user_id,
             db.func.count(WebPushSubscription.id).label('subscription_count'),
-            db.func.max(WebPushSubscription.created_at).label('last_registered_at'),
+            db.func.max(db.func.coalesce(WebPushSubscription.last_seen_at, WebPushSubscription.created_at)).label('last_registered_at'),
         )
+        .filter(WebPushSubscription.expired_at.is_(None))
         .group_by(WebPushSubscription.user_id)
         .all()
     )
@@ -1886,6 +2064,9 @@ def admin_dashboard():
     ]
 
     total_push_subscriptions = sum(item['subscription_count'] for item in push_subscribed_users)
+    pending_push_count, next_push_at = db.session.query(
+        db.func.count(WebPushDelivery.id), db.func.min(WebPushDelivery.due_at),
+    ).one()
 
     return render_template(
         'admin_dashboard.html',
@@ -1896,6 +2077,8 @@ def admin_dashboard():
         push_stats_by_user_id=push_stats_by_user_id,
         push_subscribed_users=push_subscribed_users,
         total_push_subscriptions=total_push_subscriptions,
+        pending_push_count=pending_push_count,
+        next_push_at=next_push_at,
         error_logs=error_logs,
         queued_test_notifications=queued_test_notifications,
     )
@@ -1979,18 +2162,18 @@ def admin_send_test_mail():
 @admin_required
 def admin_test_notification():
     """Send a simple test notification email to users opted into broadcasts."""
-    recipients = [u.email for u in User.query.filter(User.email != None, User.email != '', User.notify_broadcast == True).all()]
-    if not recipients:
-        flash('No recipients with email + broadcast notifications enabled', 'warning')
+    users = User.query.filter(User.notify_broadcast.is_(True)).all()
+    if not users:
+        flash('No users have broadcast notifications enabled', 'warning')
         return redirect(url_for('main.admin_dashboard'))
+    recipients = [u.email for u in users if u.email]
 
     subject = 'CCM test notification'
     body = f'This is a test notification triggered by admin {current_user.username}.'
-    mail_ok = send_mail(subject, body, recipients)
+    mail_ok = bool(recipients and send_mail(subject, body, recipients))
 
     # also send web push to broadcast-enabled users
     push_ok = False
-    users = User.query.filter(User.notify_broadcast == True).all()
     for u in users:
         push_ok = send_web_push_to_user(u, subject, body, url=url_for('main.calendar_view')) or push_ok
 
@@ -2027,7 +2210,8 @@ def admin_test_notification_user():
         mail_ok = send_mail(subject, body, [user.email])
 
     if push_ok or mail_ok:
-        flash(f'Test notification sent to {user.username} (push{" and email" if mail_ok else ""})', 'success')
+        channels = ', '.join(label for enabled, label in ((push_ok, 'push accepted'), (mail_ok, 'email sent')) if enabled)
+        flash(f'Test notification for {user.username} ({channels})', 'success')
     else:
         flash('Failed to send test notification — check push/email settings and logs', 'danger')
     return redirect(url_for('main.admin_dashboard'))
@@ -2432,18 +2616,18 @@ def change_start_time(proposal_id):
         except Exception:
             st = None
     p.start_time = st
-    db.session.commit()
     flash('Start time updated', 'success')
     # notify other participants (exclude actor)
     notify_parts = [pa.user for pa in p.participants if pa.user_id != current_user.id]
     recipients = [u.email for u in notify_parts if u.email]
     extra = f'New start time: {p.start_time.strftime("%H:%M") if p.start_time else "12:00"}'
     subj, text_body, html_body = make_proposal_mail(p, 'changed the start time', current_user.username, extra_text=extra)
-    if recipients:
-        send_mail(subj, text_body, recipients, html_body)
     discuss_url = url_for('main.proposal_discuss', proposal_id=proposal_id)
     for u in notify_parts:
-        send_web_push_to_user(u, subj, f'{current_user.username} changed the start time', url=discuss_url)
+        queue_web_push_to_user(u, subj, f'{current_user.username} changed the start time', url=discuss_url)
+    db.session.commit()
+    if recipients:
+        send_mail(subj, text_body, recipients, html_body)
     return redirect(url_for('main.proposal_discuss', proposal_id=proposal_id))
 
 
@@ -2581,10 +2765,11 @@ def _notify_group_message(group, message, sender):
             continue
         u = membership.user
         if membership.notify_push:
-            send_web_push_to_user(u, title, push_body, url=group_url)
+            queue_web_push_to_user(u, title, push_body, url=group_url)
         if membership.notify_mail and u.email:
             mail_recipients.append(u.email)
 
+    db.session.commit()
     if mail_recipients:
         short = message.content[:200] + ('…' if len(message.content) > 200 else '')
         subject = f"[{group.name}] New message from {sender.username}"
@@ -2780,7 +2965,6 @@ def regular_meal_add(group_id):
     if first_appointment is not None:
         _set_interval_anchor(rm, first_appointment)
     db.session.add(rm)
-    db.session.commit()
     _notify_regular_meal(grp, rm, current_user, action='added')
     flash('Regular meal added', 'success')
     return redirect(url_for('main.group_detail', group_id=group_id))
@@ -2834,7 +3018,6 @@ def regular_meal_shift(group_id, meal_id):
 
     new_anchor = _interval_anchor(rm) + timedelta(weeks=shift_weeks)
     _set_interval_anchor(rm, new_anchor)
-    db.session.commit()
     _notify_regular_meal(grp, rm, current_user, action='shifted')
     flash(f'Regular meal shifted by {shift_weeks} week(s)', 'success')
     return redirect(url_for('main.group_detail', group_id=group_id))
@@ -2852,7 +3035,6 @@ def regular_meal_toggle(group_id, meal_id):
         flash('No permission', 'warning')
         return redirect(url_for('main.group_detail', group_id=group_id))
     rm.active = not rm.active
-    db.session.commit()
     _notify_regular_meal(grp, rm, current_user, action='changed')
     return redirect(url_for('main.group_detail', group_id=group_id))
 
@@ -2979,9 +3161,7 @@ def group_detail(group_id):
         if att_url and _re.match(r'^https?://', att_url):
             msg.attachment_url = att_url
         db.session.add(msg)
-        db.session.commit()
-        if content or att or att_url:
-            _notify_group_message(grp, msg, current_user)
+        _notify_group_message(grp, msg, current_user)
         return redirect(url_for('main.group_detail', group_id=group_id))
 
     messages = GroupMessage.query.filter_by(group_id=group_id).order_by(GroupMessage.created_at.asc()).all()

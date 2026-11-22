@@ -163,6 +163,10 @@
     <div class="card-body">
       <h5 class="card-title">Push subscriptions</h5>
       <p class="small text-muted mb-3">Users with at least one stored push subscription: <strong>{{ push_subscribed_users|length }}</strong> of <strong>{{ users|length }}</strong>. Total stored subscriptions: <strong>{{ total_push_subscriptions }}</strong>.</p>
+      <p class="small text-muted mb-3">
+        Pending device deliveries <strong>{{ pending_push_count }}</strong>
+        {% if next_push_at %}· Next attempt <time data-utc-datetime="{{ next_push_at|utc_iso }}">{{ next_push_at|utc_iso }}</time>{% endif %}
+      </p>
       {% if push_subscribed_users %}
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
