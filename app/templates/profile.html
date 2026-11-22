@@ -73,79 +73,88 @@
       <p class="small mb-2">Browser permission: <span id="pushPermissionStatus">checking...</span></p>
       <p class="small mb-3">This device: <span id="pushDeviceStatus">checking...</span></p>
       <div class="d-flex gap-2 flex-wrap">
-        <button type="button" class="btn btn-sm btn-outline-primary" id="repairPushBtn">Repair push on this device</button>
+        <button type="button" class="btn btn-sm btn-outline-primary" id="repairPushBtn" disabled>Enable notifications</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="testPushBtn" disabled>Send a test to this device</button>
         <form method="post" action="{{ url_for('main.profile_reset_push_subscriptions', user_id=user.id) }}">
           <button class="btn btn-sm btn-outline-danger">Clear all stored push subscriptions</button>
         </form>
       </div>
-      <p class="small text-muted mt-3 mb-0">Use the device repair button on the phone or tablet that should receive notifications. If you changed devices several times, clear the stored subscriptions once and then reopen the app on each active device.</p>
+      <p class="small text-muted mt-3 mb-0">On iPhone or iPad, add CCM to your Home Screen and open it there before enabling notifications.</p>
     </div>
   </div>
   <script>
     document.addEventListener('DOMContentLoaded', function() {
+      const push = window.ccmPush;
       const permissionStatus = document.getElementById('pushPermissionStatus');
       const deviceStatus = document.getElementById('pushDeviceStatus');
-      const repairButton = document.getElementById('repairPushBtn');
+      const enableButton = document.getElementById('repairPushBtn');
+      const testButton = document.getElementById('testPushBtn');
+      let endpoint;
+      let replace = false;
 
-      async function refreshPushStatus() {
-        if (!permissionStatus || !deviceStatus) return;
-        if (!('Notification' in window) || !('serviceWorker' in navigator)) {
-          permissionStatus.textContent = 'unsupported in this browser';
-          deviceStatus.textContent = 'service workers or notifications are unavailable';
-          if (repairButton) repairButton.disabled = true;
-          return;
-        }
+      if (!push?.supported) {
+        permissionStatus.textContent = 'unavailable';
+        deviceStatus.textContent = 'push notifications are unavailable here';
+        return;
+      }
 
+      function showPermission() {
         permissionStatus.textContent = Notification.permission;
+        enableButton.textContent = Notification.permission === 'granted'
+          ? 'Repair notifications' : 'Enable notifications';
+        enableButton.disabled = Notification.permission === 'denied';
+      }
+
+      async function refreshStatus() {
         try {
-          const reg = await navigator.serviceWorker.ready;
-          const subscription = await reg.pushManager.getSubscription();
-          deviceStatus.textContent = subscription ? 'subscription present on this device' : 'no active subscription on this device';
+          const subscription = Notification.permission === 'granted'
+            ? await push.synchronize() : await push.prepare();
+          endpoint = subscription?.endpoint;
+          const status = endpoint ? await push.status(endpoint) : null;
+          testButton.disabled = !status?.registered;
+          deviceStatus.textContent = status?.registered
+            ? 'registered with CCM' : 'registration required';
+          showPermission();
         } catch (error) {
-          deviceStatus.textContent = 'unable to inspect push state';
+          deviceStatus.textContent = error.message;
+          if (Notification.permission === 'granted') showPermission();
         }
       }
 
-      async function repairPushSubscription() {
-        if (!repairButton) return;
-        repairButton.disabled = true;
-        deviceStatus.textContent = 'repairing...';
-
+      enableButton.addEventListener('click', async function() {
+        enableButton.disabled = true;
+        testButton.disabled = true;
+        deviceStatus.textContent = 'registering with CCM…';
         try {
-          if (!('Notification' in window) || !('serviceWorker' in navigator)) {
-            throw new Error('Push is not supported in this browser');
-          }
-
-          const reg = await navigator.serviceWorker.ready;
-          const existing = await reg.pushManager.getSubscription();
-          if (existing) {
-            try {
-              await fetch("{{ url_for('main.push_unsubscribe') }}", {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ endpoint: existing.endpoint })
-              });
-            } catch (error) {
-              console.warn('Server-side unsubscribe failed', error);
-            }
-            await existing.unsubscribe();
-          }
-
-          await requestPermissionAndSubscribe();
-          await refreshPushStatus();
-          deviceStatus.textContent = 'subscription repaired on this device';
+          const subscription = await push.synchronize({ interactive: true, replace });
+          endpoint = subscription.endpoint;
+          replace = false;
+          testButton.disabled = false;
+          deviceStatus.textContent = 'registered with CCM';
         } catch (error) {
-          console.warn('Push repair failed', error);
-          deviceStatus.textContent = error && error.message ? error.message : 'push repair failed';
+          deviceStatus.textContent = Notification.permission === 'denied'
+            ? 'allow notifications in your device settings and reopen CCM' : error.message;
         } finally {
-          repairButton.disabled = false;
+          showPermission();
         }
-      }
+      });
 
-      refreshPushStatus();
-      if (repairButton) {
-        repairButton.addEventListener('click', repairPushSubscription);
-      }
+      testButton.addEventListener('click', async function() {
+        testButton.disabled = true;
+        deviceStatus.textContent = 'sending a test…';
+        try {
+          await push.test(endpoint);
+          deviceStatus.textContent = 'test accepted by the push provider. Check this device for the alert.';
+        } catch (error) {
+          deviceStatus.textContent = error.message;
+          replace = error.status === 410;
+        } finally {
+          testButton.disabled = replace;
+        }
+      });
+
+      refreshStatus();
+      window.addEventListener('online', refreshStatus);
     });
   </script>
   {% endif %}

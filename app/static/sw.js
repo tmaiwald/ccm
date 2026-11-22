@@ -3,7 +3,7 @@
 // once installed, but it intentionally does not implement caching strategies.
 
 self.addEventListener('install', function(event) {
-  self.skipWaiting();
+  event.waitUntil(self.skipWaiting());
 });
 
 self.addEventListener('activate', function(event) {
@@ -21,40 +21,34 @@ function urlBase64ToUint8Array(base64String) {
   return output;
 }
 
-async function syncSubscription(subscription) {
+async function resubscribeForPush(event) {
+  let subscription = event.newSubscription || await self.registration.pushManager.getSubscription();
   if (!subscription) {
-    return;
+    const options = event.oldSubscription?.options;
+    if (options?.applicationServerKey) {
+      subscription = await self.registration.pushManager.subscribe(options);
+    } else {
+      const response = await fetch('/push/public_key', { credentials: 'same-origin', cache: 'no-store' });
+      if (!response.ok || response.redirected) throw new Error('Unable to load push settings');
+      const { publicKey } = await response.json();
+      subscription = await self.registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey)
+      });
+    }
   }
 
-  await fetch('/push/subscribe', {
+  const response = await fetch('/push/subscribe', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
-    body: JSON.stringify({ subscription: subscription.toJSON() })
+    body: JSON.stringify({
+      subscription: subscription.toJSON(),
+      previousEndpoint: event.oldSubscription?.endpoint || null
+    })
   });
-}
-
-async function resubscribeForPush(event) {
-  const publicKeyResponse = await fetch('/push/public_key', { credentials: 'same-origin' });
-  const publicKeyPayload = await publicKeyResponse.json();
-  if (!publicKeyPayload.publicKey) {
-    return;
-  }
-
-  const subscription = await self.registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(publicKeyPayload.publicKey)
-  });
-
-  await syncSubscription(subscription);
-
-  if (event.oldSubscription && event.oldSubscription.endpoint) {
-    await fetch('/push/unsubscribe', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ endpoint: event.oldSubscription.endpoint })
-    });
+  if (!response.ok || response.redirected || !(await response.json()).ok) {
+    throw new Error('CCM did not confirm the subscription');
   }
 }
 
@@ -72,7 +66,7 @@ self.addEventListener('push', function(event) {
   let data = {};
   if (event.data) {
     try {
-      data = event.data.json();
+      data = event.data.json() || {};
     } catch (e) {
       data = { body: event.data.text() };
     }
@@ -88,18 +82,19 @@ self.addEventListener('push', function(event) {
     }
   };
 
+  if (data.id) options.tag = data.id;
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener('notificationclick', function(event) {
   event.notification.close();
-  const targetUrl = (event.notification.data && event.notification.data.url) ? event.notification.data.url : '/';
-  event.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(clientList) {
-    for (const client of clientList) {
-      if (client.url.includes(new URL(targetUrl, self.location.origin).pathname)) {
-        return client.focus();
-      }
-    }
-    return clients.openWindow(targetUrl);
-  }));
+  event.waitUntil((async function() {
+    const origin = self.location.origin;
+    const target = new URL(event.notification.data?.url || '/', origin);
+    const url = target.origin === origin ? target.href : origin + '/';
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const existing = windows.find(client => client.url === url);
+    if (existing) return existing.focus();
+    return self.clients.openWindow(url);
+  })());
 });

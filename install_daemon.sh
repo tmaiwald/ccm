@@ -9,6 +9,8 @@ SERVICE_FILE="/etc/systemd/system/$SERVICE_NAME.service"
 AUTOMATION_SERVICE_NAME="ccm-regular-meals"
 AUTOMATION_SERVICE_FILE="/etc/systemd/system/$AUTOMATION_SERVICE_NAME.service"
 AUTOMATION_TIMER_FILE="/etc/systemd/system/$AUTOMATION_SERVICE_NAME.timer"
+PUSH_SERVICE_FILE="/etc/systemd/system/ccm-web-push.service"
+PUSH_TIMER_FILE="/etc/systemd/system/ccm-web-push.timer"
 CURRENT_USER="$(whoami)"
 
 echo "Project directory: $PROJECT_DIR"
@@ -69,12 +71,39 @@ echo "Writing automation timer to $AUTOMATION_TIMER_FILE (requires sudo)..."
 
 sudo tee "$AUTOMATION_TIMER_FILE" > /dev/null <<EOF
 [Unit]
-Description=Run CCM regular meal automation every 15 minutes
+Description=Run CCM regular meal automation every minute
 
 [Timer]
-OnCalendar=*:0/15
+OnCalendar=minutely
+AccuracySec=5s
 Persistent=true
 Unit=$AUTOMATION_SERVICE_NAME.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+sudo tee "$PUSH_SERVICE_FILE" > /dev/null <<EOF
+[Unit]
+Description=CCM web push delivery worker
+After=network.target $SERVICE_NAME.service
+
+[Service]
+Type=oneshot
+User=$CURRENT_USER
+WorkingDirectory=$PROJECT_DIR
+ExecStart=$VENV_PY -m flask --app run.py process-web-push
+EOF
+
+sudo tee "$PUSH_TIMER_FILE" > /dev/null <<EOF
+[Unit]
+Description=Process CCM web push deliveries
+
+[Timer]
+OnActiveSec=30s
+OnUnitInactiveSec=30s
+AccuracySec=5s
+Unit=ccm-web-push.service
 
 [Install]
 WantedBy=timers.target
@@ -83,7 +112,7 @@ EOF
 echo "Reloading systemd and starting service..."
 sudo systemctl daemon-reload
 sudo systemctl enable --now "$SERVICE_NAME"
-sudo systemctl enable --now "$AUTOMATION_SERVICE_NAME.timer"
+sudo systemctl enable --now "$AUTOMATION_SERVICE_NAME.timer" ccm-web-push.timer
 
 echo "Done. Service '$SERVICE_NAME' enabled and started."
 echo "Automation timer '$AUTOMATION_SERVICE_NAME.timer' enabled and started."

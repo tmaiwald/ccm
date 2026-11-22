@@ -16,6 +16,9 @@ echo "Stopping and disabling $AUTOMATION_SERVICE_NAME timer (requires sudo)..."
 sudo systemctl stop "$AUTOMATION_SERVICE_NAME.timer" || true
 sudo systemctl disable "$AUTOMATION_SERVICE_NAME.timer" || true
 sudo systemctl stop "$AUTOMATION_SERVICE_NAME.service" || true
+sudo systemctl disable --now ccm-web-push.timer || true
+sudo systemctl stop ccm-web-push.service || true
+sudo rm -f /etc/systemd/system/ccm-web-push.timer /etc/systemd/system/ccm-web-push.service
 
 if [ -f "$SERVICE_FILE" ]; then
   echo "Removing unit file $SERVICE_FILE (requires sudo)..."

@@ -26,6 +26,10 @@ def _ensure_runtime_schema(engine):
     inspector = inspect(engine)
     if inspector.has_table('user'):
         _ensure_column(engine, 'user', 'is_beta_tester', 'BOOLEAN DEFAULT 0')
+    if inspector.has_table('web_push_subscription'):
+        _ensure_column(engine, 'web_push_subscription', 'last_seen_at', 'DATETIME')
+        _ensure_column(engine, 'web_push_subscription', 'last_test_at', 'DATETIME')
+        _ensure_column(engine, 'web_push_subscription', 'expired_at', 'DATETIME')
     if inspector.has_table('proposal'):
         _ensure_column(engine, 'proposal', 'proposal_type', "VARCHAR(20) NOT NULL DEFAULT 'meal'")
         _ensure_column(engine, 'proposal', 'title', 'VARCHAR(150)')
@@ -128,6 +132,13 @@ def create_app():
         from .routes import process_regular_meal_automation
         processed = process_regular_meal_automation()
         click.echo(f'Processed {processed} scheduled notification task(s).')
+
+    @app.cli.command('process-web-push')
+    @with_appcontext
+    def process_web_push_command():
+        from .routes import process_web_push_deliveries
+        processed = process_web_push_deliveries()
+        click.echo(f'Processed {processed} web push delivery attempt(s).')
 
     @app.cli.command('list-regular-meal-notifications')
     @click.option('--days', default=21, show_default=True, type=int)
