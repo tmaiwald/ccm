@@ -96,24 +96,42 @@
   </div>
 
   <div class="mb-3">
-    {% if proposal.cook_user and not proposal.is_shared_cart %}
+    {% if proposal.completion %}
+      <div class="alert alert-success py-2">
+        {% if proposal.completion.cook %}
+          <strong>{{ proposal.completion.cook.username }}</strong> cooked this meal.
+        {% else %}
+          Cooking confirmed.
+        {% endif %}
+      </div>
+    {% elif proposal.cook_user and not proposal.is_shared_cart %}
       <div class="alert alert-success py-2">
         <span class="material-icons" style="font-size:16px;vertical-align:middle;">restaurant</span>
-        <strong>{{ proposal.cook_user.username }}</strong> will cook the meal.
+        <strong>{{ proposal.cook_user.username }}</strong>
+        {% if cooking_can_be_confirmed %}was assigned to cook.{% else %}will cook the meal.{% endif %}
       </div>
     {% endif %}
 
     {% if current_user.is_authenticated %}
-      {% if joined or (proposal.proposer_id == current_user.id or current_user.is_admin) %}
+      {% if joined or can_manage_cooking %}
         <div class="d-flex gap-2 flex-wrap mb-2">
-          {% if not proposal.is_shared_cart %}
+          {% if proposal.completion and can_manage_cooking %}
+            <form method="post" action="{{ url_for('main.undo_meal_cooking', proposal_id=proposal.id) }}">
+              <button class="btn btn-sm btn-outline-secondary">Undo cooking confirmation</button>
+            </form>
+          {% elif not proposal.completion and not proposal.is_shared_cart %}
+            {% if can_manage_cooking and cooking_can_be_confirmed %}
+              <form method="post" action="{{ url_for('main.confirm_meal_cooking', proposal_id=proposal.id) }}">
+                <button class="btn btn-sm btn-success">Confirm cooking</button>
+              </form>
+            {% endif %}
             <form method="post" action="{{ url_for('main.claim_cook', proposal_id=proposal.id) }}">
               {% if proposal.cook_user_id == current_user.id %}
-                <button class="btn btn-sm btn-danger">Unclaim cooking</button>
+                <button class="btn btn-sm btn-outline-danger" name="action" value="unclaim">Unclaim cooking</button>
               {% elif not proposal.cook_user %}
-                <button class="btn btn-sm btn-success">I'll cook!</button>
-              {% else %}
-                <button class="btn btn-sm btn-secondary" disabled>Someone else will cook</button>
+                <button class="btn btn-sm btn-success" name="action" value="claim">I'll cook!</button>
+              {% elif proposal.proposer_id == current_user.id or current_user.is_admin %}
+                <button class="btn btn-sm btn-outline-secondary" name="action" value="unclaim">Clear cooking assignment</button>
               {% endif %}
             </form>
           {% endif %}

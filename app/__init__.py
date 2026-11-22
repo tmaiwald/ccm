@@ -91,6 +91,7 @@ def create_app():
     db_path = os.path.join(app.instance_path, 'ccm.db')
     app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_path}"
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    app.config["MEAL_TIMEZONE"] = os.environ.get("CCM_MEAL_TIMEZONE", "Europe/Berlin")
     app.config["SECRET_KEY"] = "dev"
     # Remember-me cookie: 90-day persistent login, secure in production
     from datetime import timedelta
